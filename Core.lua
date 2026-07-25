@@ -1,11 +1,23 @@
 local addonName, ns = ...
 
 local GLOW_EDGE_OFFSET = -7
+local OVERLAY_TILE_SIZE = 32
+local STRIPE_PATTERN_ALPHA = 0.85
 local healPredictionCalculator
+
+local function GetAddonMetadata(field)
+    if C_AddOns and C_AddOns.GetAddOnMetadata then
+        return C_AddOns.GetAddOnMetadata(addonName, field)
+    end
+    if GetAddOnMetadata then
+        return GetAddOnMetadata(addonName, field)
+    end
+end
 
 ns.defaults = {
     enabled = true,
     overlayOpacity = 40,
+    overlayColor = { r = 1.0, g = 1.0, b = 1.0 },
     showGlow = true,
     glowOpacity = 60,
     glowColor = { r = 0.45, g = 0.92, b = 1.0 },
@@ -138,6 +150,9 @@ local function FrameHasOvershield(frame)
     if frame.ShieldFramesOvershieldActive then
         return true
     end
+    if frame.ShieldFramesOverlay and not frame.ShieldFramesOverlay:IsForbidden() then
+        return frame.ShieldFramesOverlay:IsShown()
+    end
     if frame.ShieldFramesOverlayBar and not frame.ShieldFramesOverlayBar:IsForbidden() then
         return frame.ShieldFramesOverlayBar:IsShown()
     end
@@ -150,32 +165,6 @@ local function HideBlizzOvershieldGlow(glow)
     end
     -- Keep the glow "shown" for detection; make Blizzard's edge glow invisible instead.
     glow:SetAlpha(0)
-end
-
-local function UpdateMidnightOvershield(frame, healthBar, unit)
-    local blizzGlow = frame.overAbsorbGlow
-    local glowVisible = FrameShowsOvershieldGlow(frame)
-
-    if glowVisible then
-        SetFrameOvershieldActive(frame, true)
-    elseif not frame.ShieldFramesOvershieldActive then
-        HideOvershieldDisplay(frame)
-        return
-    end
-
-    local overshieldAmount, maxHealth = GetCalculatorOvershieldAmount(unit)
-    ApplyOvershieldBar(frame, healthBar, overshieldAmount, maxHealth)
-
-    if FrameHasOvershield(frame) and blizzGlow then
-        HideBlizzOvershieldGlow(blizzGlow)
-    end
-
-    if frame.ShieldFramesOverlayBar and frame.ShieldFramesOverlayBar:IsShown() then
-        SetFrameOvershieldActive(frame, true)
-    elseif not glowVisible then
-        SetFrameOvershieldActive(frame, false)
-        HideOvershieldDisplay(frame)
-    end
 end
 
 local function GetUnitHealthValues(frame, unit)
@@ -204,6 +193,7 @@ local function GetOverlaySettings()
     local db = GetDB()
     return {
         overlayAlpha = (db.overlayOpacity or ns.defaults.overlayOpacity) / 100,
+        overlayColor = db.overlayColor or ns.defaults.overlayColor,
         showGlow = db.showGlow ~= false,
         glowAlpha = (db.glowOpacity or ns.defaults.glowOpacity) / 100,
         glowColor = db.glowColor or ns.defaults.glowColor,
@@ -246,17 +236,22 @@ end
 
 local function EnsureCustomTextures(frame, healthBar)
     if not frame.ShieldFramesOverlay then
-        local overlay = healthBar:CreateTexture(nil, "OVERLAY", nil, 7)
+        local tint = healthBar:CreateTexture(nil, "OVERLAY", nil, 5)
+        tint:SetTexture("Interface\\Buttons\\WHITE8X8")
+        tint:Hide()
+
+        local overlay = healthBar:CreateTexture(nil, "OVERLAY", nil, 6)
         overlay:SetTexture("Interface\\RaidFrame\\Shield-Overlay", true, true)
-        overlay.tileSize = 32
+        overlay.tileSize = OVERLAY_TILE_SIZE
         overlay:Hide()
 
-        local glow = healthBar:CreateTexture(nil, "OVERLAY", nil, 8)
+        local glow = healthBar:CreateTexture(nil, "OVERLAY", nil, 7)
         glow:SetTexture("Interface\\RaidFrame\\Shield-Overshield")
         glow:SetBlendMode("ADD")
         glow:SetWidth(16)
         glow:Hide()
 
+        frame.ShieldFramesTint = tint
         frame.ShieldFramesOverlay = overlay
         frame.ShieldFramesGlow = glow
     end
@@ -265,6 +260,9 @@ local function EnsureCustomTextures(frame, healthBar)
 end
 
 local function HideOvershieldDisplay(frame)
+    if frame.ShieldFramesTint then
+        frame.ShieldFramesTint:Hide()
+    end
     if frame.ShieldFramesOverlay then
         frame.ShieldFramesOverlay:Hide()
     end
@@ -279,52 +277,195 @@ end
 local function EnsureOvershieldBar(frame, healthBar)
     if not frame.ShieldFramesOverlayBar then
         local bar = CreateFrame("StatusBar", nil, healthBar)
-        bar:SetFrameLevel(healthBar:GetFrameLevel() + 7)
-        bar:SetStatusBarTexture("Interface\\RaidFrame\\Shield-Overlay")
+        bar:SetFrameLevel(healthBar:GetFrameLevel() + 5)
+        bar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
         bar:SetReverseFill(true)
-
-        local barTexture = bar:GetStatusBarTexture()
-        if barTexture then
-            barTexture:SetHorizTile(true)
-            barTexture:SetVertTile(true)
-        end
-
         bar:Hide()
         frame.ShieldFramesOverlayBar = bar
     end
 
-    if not frame.ShieldFramesGlow then
-        local glow = healthBar:CreateTexture(nil, "OVERLAY", nil, 8)
-        glow:SetTexture("Interface\\RaidFrame\\Shield-Overshield")
-        glow:SetBlendMode("ADD")
-        glow:SetWidth(16)
-        glow:Hide()
-        frame.ShieldFramesGlow = glow
-    end
-
-    return frame.ShieldFramesOverlayBar, frame.ShieldFramesGlow
+    local overlay, glow = EnsureCustomTextures(frame, healthBar)
+    return frame.ShieldFramesOverlayBar, overlay, glow
 end
 
 local function HideCustomTextures(frame)
     HideOvershieldDisplay(frame)
 end
 
-local function ApplyOverlayAndGlow(healthBar, overlay, glow, overlayWidth, tileSize)
+local function GetTiledOverlayTexCoord(source, tileSize, totalHeight)
+    tileSize = tileSize or OVERLAY_TILE_SIZE
+    totalHeight = totalHeight or OVERLAY_TILE_SIZE
+
+    if not source then
+        return 0, 1, 0, totalHeight / tileSize
+    end
+
+    local width = source.GetWidth and source:GetWidth()
+    if SafeNumber(width) and width > 0 then
+        width = math.floor(width + 0.5)
+        return 0, width / tileSize, 0, totalHeight / tileSize
+    end
+
+    return 0, 1, 0, totalHeight / tileSize
+end
+
+local function ApplyTiledOverlayTexture(overlay, fill, healthBar, tileSize)
+    if not overlay then
+        return
+    end
+
+    tileSize = tileSize or OVERLAY_TILE_SIZE
+    overlay:SetHorizTile(true)
+    overlay:SetVertTile(true)
+
+    local _, totalHeight = healthBar:GetSize()
+    local left, right, top, bottom = GetTiledOverlayTexCoord(overlay, tileSize, totalHeight)
+    if left == 0 and right == 1 then
+        left, right, top, bottom = GetTiledOverlayTexCoord(fill, tileSize, totalHeight)
+    end
+    if left == 0 and right == 1 then
+        left, right, top, bottom = GetTiledOverlayTexCoord(healthBar, tileSize, totalHeight)
+    end
+    overlay:SetTexCoord(left, right, top, bottom)
+end
+
+local function AnchorOverlayToFill(overlay, healthBar, fill, parent)
+    overlay:SetParent(parent or healthBar)
+    overlay:ClearAllPoints()
+    overlay:SetPoint("TOPRIGHT", healthBar, "TOPRIGHT", 0, 0)
+    overlay:SetPoint("BOTTOMRIGHT", healthBar, "BOTTOMRIGHT", 0, 0)
+    overlay:SetPoint("TOPLEFT", fill, "TOPLEFT", 0, 0)
+    overlay:SetPoint("BOTTOMLEFT", fill, "BOTTOMLEFT", 0, 0)
+end
+
+local function ApplyStripePatternOverlay(frame, healthBar, fill, parent)
+    local overlay = frame and frame.ShieldFramesOverlay
+    if not overlay or overlay:IsForbidden() or not fill then
+        return
+    end
+
+    overlay:SetTexture("Interface\\RaidFrame\\Shield-Overlay", true, true)
+    AnchorOverlayToFill(overlay, healthBar, fill, parent)
+    ApplyTiledOverlayTexture(overlay, fill, healthBar, OVERLAY_TILE_SIZE)
+    overlay:SetVertexColor(1, 1, 1, STRIPE_PATTERN_ALPHA)
+    overlay:Show()
+end
+
+local function ApplyTiledStatusBarFill(fill, healthBar, tileSize)
+    if not fill then
+        return
+    end
+
+    tileSize = tileSize or OVERLAY_TILE_SIZE
+    fill:SetHorizTile(true)
+    fill:SetVertTile(true)
+
+    local _, totalHeight = healthBar:GetSize()
+    local left, right, top, bottom = GetTiledOverlayTexCoord(fill, tileSize, totalHeight)
+    if left == 0 and right == 1 then
+        left, right, top, bottom = GetTiledOverlayTexCoord(healthBar, tileSize, totalHeight)
+    end
+    fill:SetTexCoord(left, right, top, bottom)
+end
+
+local function ApplyOvershieldBar(frame, healthBar, overshieldAmount, maxHealth)
+    local bar, overlay, glow = EnsureOvershieldBar(frame, healthBar)
+    if not bar or bar:IsForbidden() then
+        return false
+    end
+
+    local settings = GetOverlaySettings()
+    local overlayColor = settings.overlayColor
+
+    bar:ClearAllPoints()
+    bar:SetAllPoints(healthBar)
+    bar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
+    bar:SetMinMaxValues(0, maxHealth)
+    bar:SetReverseFill(true)
+    bar:SetValue(overshieldAmount)
+    bar:SetStatusBarColor(
+        overlayColor.r or 1,
+        overlayColor.g or 1,
+        overlayColor.b or 1,
+        settings.overlayAlpha
+    )
+    bar:SetAlpha(1)
+    bar:Show()
+
+    local fill = bar:GetStatusBarTexture()
+    if not fill then
+        if overlay and not overlay:IsForbidden() then
+            overlay:Hide()
+        end
+        if glow and not glow:IsForbidden() then
+            glow:Hide()
+        end
+        return false
+    end
+
+    ApplyStripePatternOverlay(frame, healthBar, fill, bar)
+
+    if glow and not glow:IsForbidden() and settings.showGlow then
+        local color = settings.glowColor
+        glow:SetParent(bar)
+        glow:ClearAllPoints()
+        glow:SetPoint("TOPLEFT", fill, "TOPLEFT", GLOW_EDGE_OFFSET, 0)
+        glow:SetPoint("BOTTOMLEFT", fill, "BOTTOMLEFT", GLOW_EDGE_OFFSET, 0)
+        glow:SetVertexColor(color.r or 1, color.g or 1, color.b or 1, settings.glowAlpha)
+        glow:Show()
+    elseif glow and not glow:IsForbidden() then
+        glow:Hide()
+    end
+
+    return true
+end
+
+local function ApplyOverlayAndGlow(frame, healthBar, overlay, glow, overlayWidth, tileSize, fillAnchor)
     if not overlay or overlay:IsForbidden() or overlayWidth <= 0 then
         return false
     end
 
     local settings = GetOverlaySettings()
-    tileSize = tileSize or overlay.tileSize or 32
-    local _, totalHeight = healthBar:GetSize()
+    tileSize = tileSize or overlay.tileSize or OVERLAY_TILE_SIZE
+    local overlayColor = settings.overlayColor
+    local tint = frame and frame.ShieldFramesTint
+
+    if tint and not tint:IsForbidden() then
+        tint:SetParent(healthBar)
+        tint:ClearAllPoints()
+        tint:SetPoint("TOPRIGHT", healthBar, "TOPRIGHT", 0, 0)
+        tint:SetPoint("BOTTOMRIGHT", healthBar, "BOTTOMRIGHT", 0, 0)
+        if fillAnchor then
+            tint:SetPoint("TOPLEFT", fillAnchor, "TOPLEFT", 0, 0)
+            tint:SetPoint("BOTTOMLEFT", fillAnchor, "BOTTOMLEFT", 0, 0)
+        else
+            tint:SetWidth(overlayWidth)
+        end
+        tint:SetTexture("Interface\\Buttons\\WHITE8X8")
+        tint:SetVertexColor(
+            overlayColor.r or 1,
+            overlayColor.g or 1,
+            overlayColor.b or 1,
+            settings.overlayAlpha
+        )
+        tint:Show()
+    end
 
     overlay:SetParent(healthBar)
     overlay:ClearAllPoints()
     overlay:SetPoint("TOPRIGHT", healthBar, "TOPRIGHT", 0, 0)
     overlay:SetPoint("BOTTOMRIGHT", healthBar, "BOTTOMRIGHT", 0, 0)
-    overlay:SetWidth(overlayWidth)
-    overlay:SetTexCoord(0, overlayWidth / tileSize, 0, totalHeight / tileSize)
-    overlay:SetVertexColor(1, 1, 1, settings.overlayAlpha)
+    if fillAnchor then
+        overlay:SetPoint("TOPLEFT", fillAnchor, "TOPLEFT", 0, 0)
+        overlay:SetPoint("BOTTOMLEFT", fillAnchor, "BOTTOMLEFT", 0, 0)
+        ApplyTiledOverlayTexture(overlay, fillAnchor, healthBar, tileSize)
+    else
+        overlay:SetWidth(overlayWidth)
+        local _, totalHeight = healthBar:GetSize()
+        overlay:SetTexCoord(0, overlayWidth / tileSize, 0, totalHeight / tileSize)
+    end
+    overlay:SetTexture("Interface\\RaidFrame\\Shield-Overlay", true, true)
+    overlay:SetVertexColor(1, 1, 1, STRIPE_PATTERN_ALPHA)
     overlay:Show()
 
     if glow and not glow:IsForbidden() and settings.showGlow then
@@ -341,33 +482,30 @@ local function ApplyOverlayAndGlow(healthBar, overlay, glow, overlayWidth, tileS
     return true
 end
 
-local function ApplyOvershieldBar(frame, healthBar, overshieldAmount, maxHealth)
-    local bar, glow = EnsureOvershieldBar(frame, healthBar)
-    if not bar or bar:IsForbidden() then
-        return false
+local function UpdateMidnightOvershield(frame, healthBar, unit)
+    local blizzGlow = frame.overAbsorbGlow
+    local glowVisible = FrameShowsOvershieldGlow(frame)
+
+    if glowVisible then
+        SetFrameOvershieldActive(frame, true)
+    elseif not frame.ShieldFramesOvershieldActive then
+        HideOvershieldDisplay(frame)
+        return
     end
 
-    local settings = GetOverlaySettings()
-    bar:ClearAllPoints()
-    bar:SetAllPoints(healthBar)
-    bar:SetMinMaxValues(0, maxHealth)
-    bar:SetValue(overshieldAmount)
-    bar:SetAlpha(settings.overlayAlpha)
-    bar:Show()
+    local overshieldAmount, maxHealth = GetCalculatorOvershieldAmount(unit)
+    ApplyOvershieldBar(frame, healthBar, overshieldAmount, maxHealth)
 
-    local fill = bar:GetStatusBarTexture()
-    if glow and fill and not glow:IsForbidden() and settings.showGlow then
-        local color = settings.glowColor
-        glow:ClearAllPoints()
-        glow:SetPoint("TOPLEFT", fill, "TOPLEFT", GLOW_EDGE_OFFSET, 0)
-        glow:SetPoint("BOTTOMLEFT", fill, "BOTTOMLEFT", GLOW_EDGE_OFFSET, 0)
-        glow:SetVertexColor(color.r or 1, color.g or 1, color.b or 1, settings.glowAlpha)
-        glow:Show()
-    elseif glow and not glow:IsForbidden() then
-        glow:Hide()
+    if FrameHasOvershield(frame) and blizzGlow then
+        HideBlizzOvershieldGlow(blizzGlow)
     end
 
-    return true
+    if frame.ShieldFramesOverlayBar and frame.ShieldFramesOverlayBar:IsShown() then
+        SetFrameOvershieldActive(frame, true)
+    elseif not glowVisible then
+        SetFrameOvershieldActive(frame, false)
+        HideOvershieldDisplay(frame)
+    end
 end
 
 local function UpdateCompactFrameInternal(frame)
@@ -426,23 +564,45 @@ local function UpdateCompactFrameInternal(frame)
     end
 
     if absorbBar and not absorbBar:IsForbidden() and absorbBar:IsShown() then
+        EnsureCustomTextures(frame, healthBar)
+        local tint = frame.ShieldFramesTint
+        local settings = GetOverlaySettings()
+        local overlayColor = settings.overlayColor
+        local tileSize = overlay.tileSize or OVERLAY_TILE_SIZE
+        local _, totalHeight = healthBar:GetSize()
+
+        if tint and not tint:IsForbidden() then
+            tint:SetParent(healthBar)
+            tint:ClearAllPoints()
+            tint:SetPoint("TOPRIGHT", absorbBar, "TOPRIGHT", 0, 0)
+            tint:SetPoint("BOTTOMRIGHT", absorbBar, "BOTTOMRIGHT", 0, 0)
+            tint:SetWidth(overlayWidth)
+            tint:SetTexture("Interface\\Buttons\\WHITE8X8")
+            tint:SetVertexColor(
+                overlayColor.r or 1,
+                overlayColor.g or 1,
+                overlayColor.b or 1,
+                settings.overlayAlpha
+            )
+            tint:Show()
+        end
+
         overlay:ClearAllPoints()
         overlay:SetParent(healthBar)
         overlay:SetPoint("TOPRIGHT", absorbBar, "TOPRIGHT", 0, 0)
         overlay:SetPoint("BOTTOMRIGHT", absorbBar, "BOTTOMRIGHT", 0, 0)
         overlay:SetWidth(overlayWidth)
-        local tileSize = overlay.tileSize or 32
-        local _, totalHeight = healthBar:GetSize()
+        overlay:SetTexture("Interface\\RaidFrame\\Shield-Overlay", true, true)
         overlay:SetTexCoord(0, overlayWidth / tileSize, 0, totalHeight / tileSize)
-        overlay:SetVertexColor(1, 1, 1, GetOverlaySettings().overlayAlpha)
+        overlay:SetVertexColor(1, 1, 1, STRIPE_PATTERN_ALPHA)
         overlay:Show()
 
-        if glow and not glow:IsForbidden() and GetOverlaySettings().showGlow then
-            local color = GetOverlaySettings().glowColor
+        if glow and not glow:IsForbidden() and settings.showGlow then
+            local color = settings.glowColor
             glow:ClearAllPoints()
             glow:SetPoint("TOPLEFT", overlay, "TOPLEFT", GLOW_EDGE_OFFSET, 0)
             glow:SetPoint("BOTTOMLEFT", overlay, "BOTTOMLEFT", GLOW_EDGE_OFFSET, 0)
-            glow:SetVertexColor(color.r or 1, color.g or 1, color.b or 1, GetOverlaySettings().glowAlpha)
+            glow:SetVertexColor(color.r or 1, color.g or 1, color.b or 1, settings.glowAlpha)
             glow:Show()
         elseif glow and not glow:IsForbidden() then
             glow:Hide()
@@ -450,7 +610,8 @@ local function UpdateCompactFrameInternal(frame)
         return
     end
 
-    ApplyOverlayAndGlow(healthBar, overlay, glow, overlayWidth, overlay.tileSize)
+    EnsureCustomTextures(frame, healthBar)
+    ApplyOverlayAndGlow(frame, healthBar, overlay, glow, overlayWidth, overlay.tileSize)
 end
 
 function ns.UpdateCompactFrame(frame)
@@ -511,7 +672,7 @@ local function UpdateUnitFrame(frame)
     end
 
     local overlay, glow = EnsureCustomTextures(frame, healthBar)
-    ApplyOverlayAndGlow(healthBar, overlay, glow, overlayWidth, 32)
+    ApplyOverlayAndGlow(frame, healthBar, overlay, glow, overlayWidth, 32)
 
     if frame.overAbsorbGlow and not frame.overAbsorbGlow:IsForbidden() then
         frame.overAbsorbGlow:Hide()
@@ -622,7 +783,8 @@ local function PrintDebugInfo()
     local ok, err = pcall(function()
         local unit = "player"
 
-        ChatPrint("|cff00ccffShieldFrames|r v1.0.11 debug")
+        local version = GetAddonMetadata("Version") or "?"
+        ChatPrint("|cff00ccffShieldFrames|r v" .. version .. " debug")
         ChatPrint("|cff00ccffShieldFrames|r enabled: " .. tostring(IsEnabled()))
         ChatPrint("|cff00ccffShieldFrames|r in combat: " .. tostring(UnitAffectingCombat(unit)))
         ChatPrint("|cff00ccffShieldFrames|r midnight APIs: " .. tostring(UsesHealPredictionCalculator()))
@@ -636,10 +798,24 @@ local function PrintDebugInfo()
             local glowShown = PlayerFrame and FrameShowsOvershieldGlow(PlayerFrame)
             ChatPrint("|cff00ccffShieldFrames|r blizz overAbsorbGlow shown: " .. tostring(glowShown))
 
-            local barShown = PlayerFrame
-                and PlayerFrame.ShieldFramesOverlayBar
-                and PlayerFrame.ShieldFramesOverlayBar:IsShown()
-            ChatPrint("|cff00ccffShieldFrames|r custom overlay bar: " .. tostring(barShown))
+            local bar = PlayerFrame and PlayerFrame.ShieldFramesOverlayBar
+            local barShown = bar and bar:IsShown()
+            ChatPrint("|cff00ccffShieldFrames|r custom overlay bar: " .. tostring(not not barShown))
+
+            if barShown and bar then
+                local fill = bar:GetStatusBarTexture()
+                local width = fill and fill:GetWidth()
+                if SafeNumber(width) and width > 0 then
+                    ChatPrint("|cff00ccffShieldFrames|r overlay width: " .. tostring(math.floor(width + 0.5)))
+                else
+                    ChatPrint("|cff00ccffShieldFrames|r overlay width: secret/unavailable")
+                end
+            end
+
+            local glowActive = PlayerFrame
+                and PlayerFrame.ShieldFramesGlow
+                and PlayerFrame.ShieldFramesGlow:IsShown()
+            ChatPrint("|cff00ccffShieldFrames|r custom glow: " .. tostring(not not glowActive))
 
             if not glowShown and not barShown then
                 ChatPrint("|cff00ccffShieldFrames|r no overshield glow. Cast a barrier at full HP to test.")

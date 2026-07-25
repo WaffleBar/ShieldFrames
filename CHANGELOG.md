@@ -2,6 +2,53 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.20] — 2026-07-25
+
+### Fixed
+- Overlay color picker tints a solid underlay; stripe texture sits on top so health bar blue no longer bleeds through
+
+## [1.0.19] — 2026-07-25
+
+### Fixed
+- `/sfdebug` uses `C_AddOns.GetAddOnMetadata` (global removed in Midnight)
+
+## [1.0.18] — 2026-07-25
+
+### Fixed
+- Restore visible overshield StatusBar rendering (hidden measure bar had zero-size fill)
+- Parent glow to overlay bar so it draws above the health bar
+- Debug output reads version from TOC and reports bar/glow state
+
+## [1.0.17] — 2026-07-25
+
+### Fixed
+- Overshield overlay and glow render again when absorb width values are secret (anchor to measure bar fill instead of reading width)
+
+## [1.0.16] — 2026-07-25
+
+### Added
+- Overlay Color picker in settings to tint the overshield stripe fill
+
+## [1.0.15] — 2026-07-25
+
+### Fixed
+- Overshield stripes now use a tiled texture with Blizzard-style tex coords instead of a stretched status bar fill
+
+## [1.0.14] — 2026-07-25
+
+### Fixed
+- Glow color picker no longer closes the Settings panel; uses `SetupColorPickerAndShow` like other addons
+
+## [1.0.13] — 2026-07-25
+
+### Fixed
+- Overshield glow texture sublevel exceeded WoW's -8..7 limit on status bars
+
+## [1.0.12] — 2026-07-25
+
+### Fixed
+- Debug and midnight overshield updates no longer call helpers before they are defined
+
 ## [1.0.11] — 2026-07-25
 
 ### Fixed
