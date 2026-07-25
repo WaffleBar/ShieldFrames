@@ -88,10 +88,28 @@ local function OpenGlowColorPicker()
     })
 end
 
+local function OpenGitHub()
+    if OpenURL then
+        OpenURL("https://github.com/WaffleBar/ShieldFrames")
+    end
+end
+
+local ADDON_DESCRIPTION = "ShieldFrames enhances Blizzard's default compact party and raid frames by visualizing overshield absorbs.|n|nInstead of a thin glow on the right edge of the health bar, ShieldFrames draws a semi-transparent overlay that extends leftward in proportion to the actual overshield value. The overlay never extends beyond the health bar frame.|n|nRequires Interface > Raid Frames > Display Incoming Heals."
+
 local function InitializeSettings()
     local category, layout = Settings.RegisterVerticalLayoutCategory("ShieldFrames")
     Settings.RegisterAddOnCategory(category)
     ns.categoryID = category:GetID()
+
+    layout:AddInitializer(CreateSettingsListSectionHeaderInitializer("About"))
+
+    layout:AddInitializer(CreateSettingsButtonInitializer(
+        "ShieldFrames",
+        "View on GitHub",
+        OpenGitHub,
+        ADDON_DESCRIPTION,
+        true
+    ))
 
     layout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Overshield Display"))
 

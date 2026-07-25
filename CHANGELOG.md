@@ -2,6 +2,15 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.2] — 2026-07-25
+
+### Added
+- Expanded addon description in the in-game addon list, settings panel, and README
+- In-game style preview images for the WowUp Hub gallery
+
+### Changed
+- Replaced placeholder gallery images with party, raid, close-up, and settings previews
+
 ## [1.0.1] — 2026-07-24
 
 ### Changed

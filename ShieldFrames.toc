@@ -1,8 +1,9 @@
 ## Interface: 120007
 ## Title: ShieldFrames
-## Notes: Shows overshield absorb as a transparent bar on Blizzard party and raid frames.
+## Notes: Overshield overlay for Blizzard party and raid frames.|n|nReplaces the default right-edge glow with a transparent bar that extends left across the health bar, sized to the real overshield amount. Works with default compact party and raid frames only.|n|nRequires Interface > Raid Frames > Display Incoming Heals.|nType /shieldframes or /sf for settings.
+## Category: Unit Frames
 ## Author: Burn and Waffle
-## Version: 1.0.1
+## Version: 1.0.2
 ## IconTexture: Interface\AddOns\ShieldFrames\Media\AddonIcon.png
 ## X-Website: https://github.com/WaffleBar/ShieldFrames
 ## SavedVariables: ShieldFramesDB

@@ -1,15 +1,17 @@
 # ShieldFrames
 
-Shows overshield absorb as a transparent bar on Blizzard's default party and raid compact frames.
+**Overshield overlay for Blizzard's default party and raid compact frames.**
 
-Instead of Blizzard's thin glow line on the right edge of the health bar, ShieldFrames draws a semi-transparent overlay that extends **leftward** across the bar in proportion to the actual overshield amount. The overlay never extends beyond the health bar frame.
+Blizzard's default overshield indicator is a thin glow line on the right edge of the health bar. ShieldFrames replaces that with a **semi-transparent overlay** that extends **leftward** across the bar in proportion to the **actual overshield amount** — absorb beyond missing health. The overlay is capped so it never extends beyond the health bar frame.
+
+Works with default **CompactPartyFrame** and **CompactRaidFrame** only. No custom unit frames, no frame replacements.
 
 ## Features
 
-- Works with default **CompactPartyFrame** and **CompactRaidFrame** unit frames — no custom unit frames required
 - Overshield overlay width matches real absorb beyond missing health
 - Optional left-edge glow with adjustable opacity and color
-- Settings under Esc → Options → AddOns → **ShieldFrames**
+- Lightweight — hooks Blizzard's existing compact frame elements
+- Settings under Esc → Options → AddOns → **ShieldFrames** (`/shieldframes`, `/sf`)
 
 ## Requirements
 
@@ -38,7 +40,7 @@ For **WowUp Hub** listing, the repo must be **public** with tagged releases that
 
 #### Preview images
 
-WowUp Hub shows a **Previews** gallery from the `.previews/` folder at release time. Replace `01-shieldframes.png` with in-game screenshots when you have them, then tag a new release so Hub re-indexes the gallery.
+WowUp Hub shows a **Previews** gallery from the `.previews/` folder at release time. The gallery includes in-game style screenshots of party frames, raid frames, overshield close-ups, and the settings panel.
 
 The **addon list thumbnail** uses `Media/AddonIcon.png` via `## IconTexture` in the TOC. The **GitHub / WowUp Hub card banner** uses the repo **Social preview** (`Media/SocialPreview.png`, 1280×640) uploaded under GitHub **Settings → Social preview**.
 
