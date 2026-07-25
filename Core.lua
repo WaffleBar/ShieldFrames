@@ -113,22 +113,37 @@ local function UpdateHealPredictionCalculator(unit)
     return calculator
 end
 
-local function GetCalculatorOvershieldAmount(unit)
+local function GetCalculatorAbsorbValues(unit)
     local calculator = UpdateHealPredictionCalculator(unit)
     if not calculator then
         return
     end
 
-    -- Feed the full barrier to the overlay bar; a clip frame anchored to the
-    -- health fill reveals only the overshield portion (no secret subtraction).
-    local amount
+    -- Total absorb drives the reverse-fill bar; in-bar clamp reveals overshield via subtraction.
+    local totalAbsorb
     if calculator.GetTotalDamageAbsorbs then
-        amount = calculator:GetTotalDamageAbsorbs()
-    elseif calculator.GetDamageAbsorbs then
-        amount = calculator:GetDamageAbsorbs()
+        totalAbsorb = calculator:GetTotalDamageAbsorbs()
+    end
+    if totalAbsorb == nil and calculator.GetDamageAbsorbs then
+        totalAbsorb = calculator:GetDamageAbsorbs()
     end
 
-    return amount, calculator:GetMaximumHealth(), calculator
+    local inBarAbsorb
+    if calculator.GetDamageAbsorbs then
+        inBarAbsorb = calculator:GetDamageAbsorbs()
+    end
+
+    local maxHealth = calculator.GetMaximumHealth and calculator:GetMaximumHealth()
+    local overshieldAmount
+
+    if totalAbsorb ~= nil and inBarAbsorb ~= nil and CanAccessValue(totalAbsorb) and CanAccessValue(inBarAbsorb) then
+        overshieldAmount = totalAbsorb - inBarAbsorb
+        if overshieldAmount < 0 then
+            overshieldAmount = 0
+        end
+    end
+
+    return totalAbsorb, overshieldAmount, maxHealth, calculator
 end
 
 local function FrameShowsOvershieldGlow(frame)
@@ -136,35 +151,54 @@ local function FrameShowsOvershieldGlow(frame)
     if not glow or (type(glow.IsForbidden) == "function" and glow:IsForbidden()) then
         return false
     end
-    return glow:IsShown()
+    -- We fade Blizzard's glow to hide it; alpha 0 must not count as active overshield.
+    return glow:IsShown() and glow:GetAlpha() > 0.01
 end
 
 local function SetFrameOvershieldActive(frame, active)
     frame.ShieldFramesOvershieldActive = active or nil
 end
 
-local function FrameHasOvershield(frame)
-    if FrameShowsOvershieldGlow(frame) then
-        return true
-    end
-    if frame.ShieldFramesOvershieldActive then
-        return true
-    end
-    if frame.ShieldFramesOverlay and not frame.ShieldFramesOverlay:IsForbidden() then
-        return frame.ShieldFramesOverlay:IsShown()
-    end
-    if frame.ShieldFramesOverlayBar and not frame.ShieldFramesOverlayBar:IsForbidden() then
-        return frame.ShieldFramesOverlayBar:IsShown()
-    end
-    return false
-end
-
 local function HideBlizzOvershieldGlow(glow)
     if not glow or (type(glow.IsForbidden) == "function" and glow:IsForbidden()) then
         return
     end
-    -- Keep the glow "shown" for detection; make Blizzard's edge glow invisible instead.
     glow:SetAlpha(0)
+end
+
+local function RestoreBlizzOvershieldGlow(glow)
+    if not glow or (type(glow.IsForbidden) == "function" and glow:IsForbidden()) then
+        return
+    end
+    glow:SetAlpha(1)
+end
+
+local function ShouldShowOvershieldGlow(overshieldAmount, fill)
+    if overshieldAmount ~= nil then
+        return overshieldAmount > 0
+    end
+
+    local width = fill and SafeNumber(fill:GetWidth())
+    return width and width > 0.5
+end
+
+local function MidnightFrameHasOvershield(frame, overshieldAmount, totalAbsorb)
+    if overshieldAmount ~= nil then
+        return overshieldAmount > 0
+    end
+
+    if FrameShowsOvershieldGlow(frame) then
+        return true
+    end
+
+    if frame.ShieldFramesOvershieldActive then
+        if totalAbsorb ~= nil and CanAccessValue(totalAbsorb) and totalAbsorb <= 0 then
+            return false
+        end
+        return true
+    end
+
+    return false
 end
 
 local function GetUnitHealthValues(frame, unit)
@@ -275,6 +309,7 @@ local function HideOvershieldDisplay(frame)
     if frame.ShieldFramesOverlayClip and not frame.ShieldFramesOverlayClip:IsForbidden() then
         frame.ShieldFramesOverlayClip:Hide()
     end
+    RestoreBlizzOvershieldGlow(frame.overAbsorbGlow)
 end
 
 local function EnsureOvershieldBar(frame, healthBar)
@@ -397,7 +432,7 @@ local function ApplyTiledStatusBarFill(fill, healthBar, tileSize)
     fill:SetTexCoord(left, right, top, bottom)
 end
 
-local function ApplyOvershieldBar(frame, healthBar, absorbAmount, maxHealth)
+local function ApplyOvershieldBar(frame, healthBar, absorbAmount, maxHealth, overshieldAmount)
     local bar, overlay, glow, clip = EnsureOvershieldBar(frame, healthBar)
     if not bar or bar:IsForbidden() or not clip or clip:IsForbidden() then
         return false
@@ -445,7 +480,7 @@ local function ApplyOvershieldBar(frame, healthBar, absorbAmount, maxHealth)
 
     ApplyStripePatternOverlay(frame, healthBar, fill, bar)
 
-    if glow and not glow:IsForbidden() and settings.showGlow then
+    if glow and not glow:IsForbidden() and settings.showGlow and ShouldShowOvershieldGlow(overshieldAmount, fill) then
         local color = settings.glowColor
         glow:SetParent(bar)
         glow:ClearAllPoints()
@@ -525,25 +560,26 @@ end
 
 local function UpdateMidnightOvershield(frame, healthBar, unit)
     local blizzGlow = frame.overAbsorbGlow
-    local glowVisible = FrameShowsOvershieldGlow(frame)
+    local totalAbsorb, overshieldAmount, maxHealth = GetCalculatorAbsorbValues(unit)
 
-    if glowVisible then
-        SetFrameOvershieldActive(frame, true)
-    elseif not frame.ShieldFramesOvershieldActive then
+    if not MidnightFrameHasOvershield(frame, overshieldAmount, totalAbsorb) then
+        SetFrameOvershieldActive(frame, false)
         HideOvershieldDisplay(frame)
         return
     end
 
-    local absorbAmount, maxHealth = GetCalculatorOvershieldAmount(unit)
-    ApplyOvershieldBar(frame, healthBar, absorbAmount, maxHealth)
-
-    if FrameHasOvershield(frame) and blizzGlow then
-        HideBlizzOvershieldGlow(blizzGlow)
+    if not totalAbsorb or not maxHealth then
+        SetFrameOvershieldActive(frame, false)
+        HideOvershieldDisplay(frame)
+        return
     end
 
-    if frame.ShieldFramesOverlayBar and frame.ShieldFramesOverlayBar:IsShown() then
-        SetFrameOvershieldActive(frame, true)
-    elseif not glowVisible then
+    SetFrameOvershieldActive(frame, true)
+    local applied = ApplyOvershieldBar(frame, healthBar, totalAbsorb, maxHealth, overshieldAmount)
+
+    if applied and blizzGlow then
+        HideBlizzOvershieldGlow(blizzGlow)
+    elseif not applied then
         SetFrameOvershieldActive(frame, false)
         HideOvershieldDisplay(frame)
     end
@@ -837,7 +873,14 @@ local function PrintDebugInfo()
             end
 
             local glowShown = PlayerFrame and FrameShowsOvershieldGlow(PlayerFrame)
-            ChatPrint("|cff00ccffShieldFrames|r blizz overAbsorbGlow shown: " .. tostring(glowShown))
+            ChatPrint("|cff00ccffShieldFrames|r blizz overAbsorbGlow active: " .. tostring(glowShown))
+
+            local _, overshieldAmount = GetCalculatorAbsorbValues(unit)
+            if overshieldAmount ~= nil and CanAccessValue(overshieldAmount) then
+                ChatPrint("|cff00ccffShieldFrames|r calculator overshield: " .. tostring(overshieldAmount))
+            else
+                ChatPrint("|cff00ccffShieldFrames|r calculator overshield: secret/unavailable")
+            end
 
             local bar = PlayerFrame and PlayerFrame.ShieldFramesOverlayBar
             local barShown = bar and bar:IsShown()

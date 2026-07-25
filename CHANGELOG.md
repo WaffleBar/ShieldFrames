@@ -2,6 +2,11 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.23] — 2026-07-25
+
+### Fixed
+- Edge glow no longer lingers when only in-bar absorb is present; midnight path derives overshield from total minus clamped absorb and ignores Blizzard's faded glow for detection
+
 ## [1.0.22] — 2026-07-25
 
 ### Fixed
