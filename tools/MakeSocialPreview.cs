@@ -98,7 +98,7 @@ public static class MakeSocialPreview
             DrawCentered(g, "Overshield overlay", subtitleFont, subtitleBrush, width, 228f);
             DrawCentered(g, "for Blizzard unit frames", subtitleFont, subtitleBrush, width, 272f);
             DrawCentered(g, "Player  ·  Target  ·  Party  ·  Raid", detailFont, detailBrush, width, height - 72f);
-            DrawCentered(g, "By Burn and Waffle", creditFont, detailBrush, width, height - 40f);
+            DrawCentered(g, "By Waffle", creditFont, detailBrush, width, height - 40f);
         }
     }
 

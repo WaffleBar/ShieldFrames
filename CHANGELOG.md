@@ -2,6 +2,11 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.44] — 2026-07-25
+
+### Changed
+- Author metadata updated to **Waffle**
+
 ## [1.0.43] — 2026-07-25
 
 ### Fixed
