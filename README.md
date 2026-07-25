@@ -40,7 +40,7 @@ For **WowUp Hub** listing, the repo must be **public** with tagged releases that
 
 WowUp Hub shows a **Previews** gallery from the `.previews/` folder at release time. Replace `01-shieldframes.png` with in-game screenshots when you have them, then tag a new release so Hub re-indexes the gallery.
 
-The **addon list thumbnail** uses `Media/AddonIcon.png` via `## IconTexture` in the TOC. You can also set a GitHub repo **Social preview** under **Settings → Social preview** (recommended 1280×640).
+The **addon list thumbnail** uses `Media/AddonIcon.png` via `## IconTexture` in the TOC. The **GitHub / WowUp Hub card banner** uses the repo **Social preview** (`Media/SocialPreview.png`, 1280×640) uploaded under GitHub **Settings → Social preview**.
 
 #### GitHub topics
 

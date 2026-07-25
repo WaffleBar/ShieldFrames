@@ -14,6 +14,10 @@ This folder is **not** packaged into the WoW addon zip (see `.pkgmeta`).
 
 ## Files
 
-- `01-shieldframes.png` — placeholder icon art; replace with in-game screenshots before tagging if you want a richer Hub gallery
+- `01-party-overshield.png` — party frames with overshield overlay
+- `02-settings-panel.png` — ShieldFrames settings panel
+- `03-raid-frames.png` — raid frames with overshield highlights
+
+The repository **social preview** banner lives at `Media/SocialPreview.png` (1280×640) and is mirrored in `.github/social-preview.png` for easy upload to GitHub Settings.
 
 After adding or changing images, commit to `main` and push a new version tag (e.g. `v1.0.0`) so WowUp Hub re-indexes the gallery.

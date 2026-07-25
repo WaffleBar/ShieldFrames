@@ -6,4 +6,5 @@ ignore:
   - .previews
   - README.md
   - CHANGELOG.md
+  - Media/SocialPreview.png
   - "*.zip"

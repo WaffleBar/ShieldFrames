@@ -2,6 +2,12 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.1] — 2026-07-24
+
+### Changed
+- **Hub gallery** — added party, settings, and raid frame preview images
+- **Social preview** — added 1280×640 repository banner for GitHub and WowUp Hub
+
 ## [1.0.0] — 2026-07-24
 
 ### Added
