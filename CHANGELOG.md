@@ -2,6 +2,11 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.25] — 2026-07-25
+
+### Fixed
+- Midnight overshield math and comparisons wrapped in safe accessors so tainted calculator values cannot throw on party/raid frames
+
 ## [1.0.24] — 2026-07-25
 
 ### Fixed

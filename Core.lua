@@ -69,6 +69,45 @@ local function CanAccessValue(value)
     return canaccessvalue and canaccessvalue(value)
 end
 
+local function SafeCompare(fn)
+    local ok, result = pcall(fn)
+    if not ok then
+        return nil
+    end
+    return result
+end
+
+local function SafeGreaterThan(value, threshold)
+    if not CanAccessValue(value) then
+        return nil
+    end
+    return SafeCompare(function()
+        return value > threshold
+    end)
+end
+
+local function SafeLessOrEqual(value, threshold)
+    if not CanAccessValue(value) then
+        return nil
+    end
+    return SafeCompare(function()
+        return value <= threshold
+    end)
+end
+
+local function SafeSubtractClampNonNegative(a, b)
+    if not CanAccessValue(a) or not CanAccessValue(b) then
+        return nil
+    end
+    return SafeCompare(function()
+        local amount = a - b
+        if amount < 0 then
+            amount = 0
+        end
+        return amount
+    end)
+end
+
 local function UsesHealPredictionCalculator()
     return CreateUnitHealPredictionCalculator ~= nil and UnitGetDetailedHealPrediction ~= nil
 end
@@ -134,24 +173,13 @@ local function GetCalculatorAbsorbValues(unit)
     end
 
     local maxHealth = calculator.GetMaximumHealth and calculator:GetMaximumHealth()
-    local overshieldAmount
-
-    if totalAbsorb ~= nil and inBarAbsorb ~= nil and CanAccessValue(totalAbsorb) and CanAccessValue(inBarAbsorb) then
-        overshieldAmount = totalAbsorb - inBarAbsorb
-        if overshieldAmount < 0 then
-            overshieldAmount = 0
-        end
-    end
+    local overshieldAmount = SafeSubtractClampNonNegative(totalAbsorb, inBarAbsorb)
 
     return totalAbsorb, overshieldAmount, maxHealth, calculator
 end
 
 local function IsPositiveAmount(value)
-    local amount = SafeNumber(value)
-    if amount == nil then
-        return nil
-    end
-    return amount > 0
+    return SafeGreaterThan(value, 0)
 end
 
 local function FrameShowsOvershieldGlow(frame)
@@ -197,7 +225,7 @@ local function ShouldShowOvershieldGlow(overshieldAmount, fill)
     end
 
     local width = fill and SafeNumber(fill:GetWidth())
-    return width and width > 0.5
+    return SafeGreaterThan(width, 0.5) == true
 end
 
 local function MidnightFrameHasOvershield(frame, overshieldAmount, totalAbsorb)
@@ -211,7 +239,8 @@ local function MidnightFrameHasOvershield(frame, overshieldAmount, totalAbsorb)
     end
 
     if frame.ShieldFramesOvershieldActive then
-        if totalAbsorb ~= nil and CanAccessValue(totalAbsorb) and totalAbsorb <= 0 then
+        local noAbsorb = SafeLessOrEqual(totalAbsorb, 0)
+        if noAbsorb == true then
             return false
         end
         return true
