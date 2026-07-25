@@ -119,8 +119,8 @@ local function GetCalculatorOvershieldAmount(unit)
         return
     end
 
-    -- GetDamageAbsorbs returns the in-bar clamped amount (often 0 at full HP).
-    -- GetTotalDamageAbsorbs is the full barrier value we need for the overlay width.
+    -- Feed the full barrier to the overlay bar; a clip frame anchored to the
+    -- health fill reveals only the overshield portion (no secret subtraction).
     local amount
     if calculator.GetTotalDamageAbsorbs then
         amount = calculator:GetTotalDamageAbsorbs()
@@ -272,11 +272,21 @@ local function HideOvershieldDisplay(frame)
     if frame.ShieldFramesOverlayBar and not frame.ShieldFramesOverlayBar:IsForbidden() then
         frame.ShieldFramesOverlayBar:Hide()
     end
+    if frame.ShieldFramesOverlayClip and not frame.ShieldFramesOverlayClip:IsForbidden() then
+        frame.ShieldFramesOverlayClip:Hide()
+    end
 end
 
 local function EnsureOvershieldBar(frame, healthBar)
+    if not frame.ShieldFramesOverlayClip then
+        local clip = CreateFrame("Frame", nil, healthBar)
+        clip:SetClipsChildren(true)
+        clip:Hide()
+        frame.ShieldFramesOverlayClip = clip
+    end
+
     if not frame.ShieldFramesOverlayBar then
-        local bar = CreateFrame("StatusBar", nil, healthBar)
+        local bar = CreateFrame("StatusBar", nil, frame.ShieldFramesOverlayClip)
         bar:SetFrameLevel(healthBar:GetFrameLevel() + 5)
         bar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
         bar:SetReverseFill(true)
@@ -285,7 +295,7 @@ local function EnsureOvershieldBar(frame, healthBar)
     end
 
     local overlay, glow = EnsureCustomTextures(frame, healthBar)
-    return frame.ShieldFramesOverlayBar, overlay, glow
+    return frame.ShieldFramesOverlayBar, overlay, glow, frame.ShieldFramesOverlayClip
 end
 
 local function HideCustomTextures(frame)
@@ -387,21 +397,32 @@ local function ApplyTiledStatusBarFill(fill, healthBar, tileSize)
     fill:SetTexCoord(left, right, top, bottom)
 end
 
-local function ApplyOvershieldBar(frame, healthBar, overshieldAmount, maxHealth)
-    local bar, overlay, glow = EnsureOvershieldBar(frame, healthBar)
-    if not bar or bar:IsForbidden() then
+local function ApplyOvershieldBar(frame, healthBar, absorbAmount, maxHealth)
+    local bar, overlay, glow, clip = EnsureOvershieldBar(frame, healthBar)
+    if not bar or bar:IsForbidden() or not clip or clip:IsForbidden() then
+        return false
+    end
+
+    local healthFill = healthBar:GetStatusBarTexture()
+    if not healthFill then
         return false
     end
 
     local settings = GetOverlaySettings()
     local overlayColor = settings.overlayColor
 
+    clip:ClearAllPoints()
+    clip:SetPoint("TOPLEFT", healthFill, "TOPLEFT", 0, 0)
+    clip:SetPoint("BOTTOMRIGHT", healthFill, "BOTTOMRIGHT", 0, 0)
+    clip:Show()
+
     bar:ClearAllPoints()
-    bar:SetAllPoints(healthBar)
+    bar:SetPoint("TOPLEFT", healthBar, "TOPLEFT", 0, 0)
+    bar:SetPoint("BOTTOMRIGHT", healthBar, "BOTTOMRIGHT", 0, 0)
     bar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
     bar:SetMinMaxValues(0, maxHealth)
     bar:SetReverseFill(true)
-    bar:SetValue(overshieldAmount)
+    bar:SetValue(absorbAmount)
     bar:SetStatusBarColor(
         overlayColor.r or 1,
         overlayColor.g or 1,
@@ -513,8 +534,8 @@ local function UpdateMidnightOvershield(frame, healthBar, unit)
         return
     end
 
-    local overshieldAmount, maxHealth = GetCalculatorOvershieldAmount(unit)
-    ApplyOvershieldBar(frame, healthBar, overshieldAmount, maxHealth)
+    local absorbAmount, maxHealth = GetCalculatorOvershieldAmount(unit)
+    ApplyOvershieldBar(frame, healthBar, absorbAmount, maxHealth)
 
     if FrameHasOvershield(frame) and blizzGlow then
         HideBlizzOvershieldGlow(blizzGlow)

@@ -2,6 +2,11 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.22] — 2026-07-25
+
+### Fixed
+- Overshield overlay no longer leaves a gap at partial HP; the bar is clipped to the current health fill so only the backfill portion is visible
+
 ## [1.0.21] — 2026-07-25
 
 ### Fixed
