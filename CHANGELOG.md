@@ -2,6 +2,11 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.24] — 2026-07-25
+
+### Fixed
+- Secret-value Lua error on party/raid frames when checking Blizzard overshield glow alpha (track fade state instead of comparing `GetAlpha()`)
+
 ## [1.0.23] — 2026-07-25
 
 ### Fixed
