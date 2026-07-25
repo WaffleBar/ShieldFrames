@@ -1,6 +1,7 @@
 local addonName, ns = ...
 
 local GLOW_EDGE_OFFSET = -7
+local healPredictionCalculator
 
 ns.defaults = {
     enabled = true,
@@ -44,6 +45,137 @@ local function SafeNumber(value)
         return nil
     end
     return value
+end
+
+local function CanAccessValue(value)
+    if value == nil then
+        return false
+    end
+    if not IsSecret(value) then
+        return true
+    end
+    return canaccessvalue and canaccessvalue(value)
+end
+
+local function UsesHealPredictionCalculator()
+    return CreateUnitHealPredictionCalculator ~= nil and UnitGetDetailedHealPrediction ~= nil
+end
+
+local function EnsureHealPredictionCalculator()
+    if healPredictionCalculator then
+        return healPredictionCalculator
+    end
+    if not CreateUnitHealPredictionCalculator then
+        return nil
+    end
+
+    healPredictionCalculator = CreateUnitHealPredictionCalculator()
+    if healPredictionCalculator.SetToDefaults then
+        healPredictionCalculator:SetToDefaults()
+    end
+    if healPredictionCalculator.SetDamageAbsorbClampMode and Enum and Enum.UnitDamageAbsorbClampMode then
+        healPredictionCalculator:SetDamageAbsorbClampMode(Enum.UnitDamageAbsorbClampMode.MissingHealthWithoutIncomingHeals)
+    end
+
+    return healPredictionCalculator
+end
+
+local function UpdateHealPredictionCalculator(unit)
+    local calculator = EnsureHealPredictionCalculator()
+    if not calculator or not UnitGetDetailedHealPrediction then
+        return nil
+    end
+
+    if calculator.Reset then
+        calculator:Reset()
+    end
+
+    local ok = pcall(UnitGetDetailedHealPrediction, unit, "player", calculator)
+    if not ok then
+        ok = pcall(UnitGetDetailedHealPrediction, unit, calculator)
+    end
+    if not ok then
+        return nil
+    end
+
+    return calculator
+end
+
+local function GetCalculatorOvershieldAmount(unit)
+    local calculator = UpdateHealPredictionCalculator(unit)
+    if not calculator then
+        return
+    end
+
+    -- GetDamageAbsorbs returns the in-bar clamped amount (often 0 at full HP).
+    -- GetTotalDamageAbsorbs is the full barrier value we need for the overlay width.
+    local amount
+    if calculator.GetTotalDamageAbsorbs then
+        amount = calculator:GetTotalDamageAbsorbs()
+    elseif calculator.GetDamageAbsorbs then
+        amount = calculator:GetDamageAbsorbs()
+    end
+
+    return amount, calculator:GetMaximumHealth(), calculator
+end
+
+local function FrameShowsOvershieldGlow(frame)
+    local glow = frame.overAbsorbGlow
+    if not glow or (type(glow.IsForbidden) == "function" and glow:IsForbidden()) then
+        return false
+    end
+    return glow:IsShown()
+end
+
+local function SetFrameOvershieldActive(frame, active)
+    frame.ShieldFramesOvershieldActive = active or nil
+end
+
+local function FrameHasOvershield(frame)
+    if FrameShowsOvershieldGlow(frame) then
+        return true
+    end
+    if frame.ShieldFramesOvershieldActive then
+        return true
+    end
+    if frame.ShieldFramesOverlayBar and not frame.ShieldFramesOverlayBar:IsForbidden() then
+        return frame.ShieldFramesOverlayBar:IsShown()
+    end
+    return false
+end
+
+local function HideBlizzOvershieldGlow(glow)
+    if not glow or (type(glow.IsForbidden) == "function" and glow:IsForbidden()) then
+        return
+    end
+    -- Keep the glow "shown" for detection; make Blizzard's edge glow invisible instead.
+    glow:SetAlpha(0)
+end
+
+local function UpdateMidnightOvershield(frame, healthBar, unit)
+    local blizzGlow = frame.overAbsorbGlow
+    local glowVisible = FrameShowsOvershieldGlow(frame)
+
+    if glowVisible then
+        SetFrameOvershieldActive(frame, true)
+    elseif not frame.ShieldFramesOvershieldActive then
+        HideOvershieldDisplay(frame)
+        return
+    end
+
+    local overshieldAmount, maxHealth = GetCalculatorOvershieldAmount(unit)
+    ApplyOvershieldBar(frame, healthBar, overshieldAmount, maxHealth)
+
+    if FrameHasOvershield(frame) and blizzGlow then
+        HideBlizzOvershieldGlow(blizzGlow)
+    end
+
+    if frame.ShieldFramesOverlayBar and frame.ShieldFramesOverlayBar:IsShown() then
+        SetFrameOvershieldActive(frame, true)
+    elseif not glowVisible then
+        SetFrameOvershieldActive(frame, false)
+        HideOvershieldDisplay(frame)
+    end
 end
 
 local function GetUnitHealthValues(frame, unit)
@@ -132,13 +264,49 @@ local function EnsureCustomTextures(frame, healthBar)
     return frame.ShieldFramesOverlay, frame.ShieldFramesGlow
 end
 
-local function HideCustomTextures(frame)
+local function HideOvershieldDisplay(frame)
     if frame.ShieldFramesOverlay then
         frame.ShieldFramesOverlay:Hide()
     end
     if frame.ShieldFramesGlow then
         frame.ShieldFramesGlow:Hide()
     end
+    if frame.ShieldFramesOverlayBar and not frame.ShieldFramesOverlayBar:IsForbidden() then
+        frame.ShieldFramesOverlayBar:Hide()
+    end
+end
+
+local function EnsureOvershieldBar(frame, healthBar)
+    if not frame.ShieldFramesOverlayBar then
+        local bar = CreateFrame("StatusBar", nil, healthBar)
+        bar:SetFrameLevel(healthBar:GetFrameLevel() + 7)
+        bar:SetStatusBarTexture("Interface\\RaidFrame\\Shield-Overlay")
+        bar:SetReverseFill(true)
+
+        local barTexture = bar:GetStatusBarTexture()
+        if barTexture then
+            barTexture:SetHorizTile(true)
+            barTexture:SetVertTile(true)
+        end
+
+        bar:Hide()
+        frame.ShieldFramesOverlayBar = bar
+    end
+
+    if not frame.ShieldFramesGlow then
+        local glow = healthBar:CreateTexture(nil, "OVERLAY", nil, 8)
+        glow:SetTexture("Interface\\RaidFrame\\Shield-Overshield")
+        glow:SetBlendMode("ADD")
+        glow:SetWidth(16)
+        glow:Hide()
+        frame.ShieldFramesGlow = glow
+    end
+
+    return frame.ShieldFramesOverlayBar, frame.ShieldFramesGlow
+end
+
+local function HideCustomTextures(frame)
+    HideOvershieldDisplay(frame)
 end
 
 local function ApplyOverlayAndGlow(healthBar, overlay, glow, overlayWidth, tileSize)
@@ -173,14 +341,58 @@ local function ApplyOverlayAndGlow(healthBar, overlay, glow, overlayWidth, tileS
     return true
 end
 
+local function ApplyOvershieldBar(frame, healthBar, overshieldAmount, maxHealth)
+    local bar, glow = EnsureOvershieldBar(frame, healthBar)
+    if not bar or bar:IsForbidden() then
+        return false
+    end
+
+    local settings = GetOverlaySettings()
+    bar:ClearAllPoints()
+    bar:SetAllPoints(healthBar)
+    bar:SetMinMaxValues(0, maxHealth)
+    bar:SetValue(overshieldAmount)
+    bar:SetAlpha(settings.overlayAlpha)
+    bar:Show()
+
+    local fill = bar:GetStatusBarTexture()
+    if glow and fill and not glow:IsForbidden() and settings.showGlow then
+        local color = settings.glowColor
+        glow:ClearAllPoints()
+        glow:SetPoint("TOPLEFT", fill, "TOPLEFT", GLOW_EDGE_OFFSET, 0)
+        glow:SetPoint("BOTTOMLEFT", fill, "BOTTOMLEFT", GLOW_EDGE_OFFSET, 0)
+        glow:SetVertexColor(color.r or 1, color.g or 1, color.b or 1, settings.glowAlpha)
+        glow:Show()
+    elseif glow and not glow:IsForbidden() then
+        glow:Hide()
+    end
+
+    return true
+end
+
 local function UpdateCompactFrameInternal(frame)
-    if not IsEnabled() or not frame or frame:IsForbidden() or not frame.displayedUnit or not frame.healthBar then
+    if not IsEnabled() or not frame then
+        return
+    end
+
+    if type(frame.IsForbidden) == "function" and frame:IsForbidden() then
+        return
+    end
+
+    if not frame.displayedUnit or not frame.healthBar then
         return
     end
 
     local healthBar = frame.healthBar
+    local blizzGlow = frame.overAbsorbGlow
+
+    if UsesHealPredictionCalculator() then
+        UpdateMidnightOvershield(frame, healthBar, frame.displayedUnit)
+        return
+    end
+
     local overlay = frame.totalAbsorbOverlay
-    local glow = frame.overAbsorbGlow
+    local glow = blizzGlow
     local absorbBar = frame.totalAbsorb
 
     if not overlay or overlay:IsForbidden() then
@@ -246,28 +458,43 @@ function ns.UpdateCompactFrame(frame)
 end
 
 local function UpdateUnitFrame(frame)
-    if not IsEnabled() or not frame or frame:IsForbidden() or not frame.unit then
+    if not IsEnabled() or not frame then
         return
     end
 
-    local curHealth, maxHealth, healthBar = GetUnitHealthValues(frame, frame.unit)
-    if not healthBar or healthBar:IsForbidden() or not curHealth or not maxHealth or maxHealth <= 0 then
+    if type(frame.IsForbidden) == "function" and frame:IsForbidden() then
+        return
+    end
+
+    if not frame.unit then
+        return
+    end
+
+    local healthBar = frame.healthbar or frame.healthBar
+    if not healthBar or healthBar:IsForbidden() then
+        return
+    end
+
+    if UsesHealPredictionCalculator() then
+        UpdateMidnightOvershield(frame, healthBar, frame.unit)
+        return
+    end
+
+    local curHealth, maxHealth = GetUnitHealthValues(frame, frame.unit)
+    if not curHealth or not maxHealth or maxHealth <= 0 then
         return
     end
 
     local totalAbsorb = UnitGetTotalAbsorbs(frame.unit) or 0
     totalAbsorb = SafeNumber(totalAbsorb) or 0
     if totalAbsorb <= 0 then
-        HideCustomTextures(frame)
+        HideOvershieldDisplay(frame)
         return
     end
 
     local overshield = GetOvershieldAmount(frame.unit, curHealth, maxHealth)
     if overshield <= 0 then
-        HideCustomTextures(frame)
-        if frame.overAbsorbGlow and not frame.overAbsorbGlow:IsForbidden() then
-            -- Leave Blizzard's default absorb display when there is no overshield.
-        end
+        HideOvershieldDisplay(frame)
         return
     end
 
@@ -279,7 +506,7 @@ local function UpdateUnitFrame(frame)
     local fillWidth = (curHealth / maxHealth) * barWidth
     local overlayWidth = Clamp((overshield / maxHealth) * barWidth, 0, math.min(fillWidth, barWidth))
     if overlayWidth <= 0 then
-        HideCustomTextures(frame)
+        HideOvershieldDisplay(frame)
         return
     end
 
@@ -296,28 +523,31 @@ local function ForEachCompactFrame(callback)
         return
     end
 
+    local function TryFrame(frame)
+        if frame and type(callback) == "function" then
+            callback(frame)
+        end
+    end
+
     if CompactPartyFrame and CompactPartyFrame.members then
         for _, memberFrame in pairs(CompactPartyFrame.members) do
-            callback(memberFrame)
+            TryFrame(memberFrame)
         end
     end
 
     if CompactPartyFrame and CompactPartyFrame.flowFrames then
         for _, memberFrame in ipairs(CompactPartyFrame.flowFrames) do
-            callback(memberFrame)
+            TryFrame(memberFrame)
         end
     end
 
     for index = 1, 5 do
-        local memberFrame = _G["CompactPartyFrameMember" .. index]
-        if memberFrame then
-            callback(memberFrame)
-        end
+        TryFrame(_G["CompactPartyFrameMember" .. index])
     end
 
     if CompactRaidFrameContainer and CompactRaidFrameContainer.flowFrames then
         for _, memberFrame in ipairs(CompactRaidFrameContainer.flowFrames) do
-            callback(memberFrame)
+            TryFrame(memberFrame)
         end
     end
 
@@ -325,17 +555,14 @@ local function ForEachCompactFrame(callback)
         for _, group in pairs(CompactRaidFrameContainer.groups) do
             if group and group.flowFrames then
                 for _, memberFrame in ipairs(group.flowFrames) do
-                    callback(memberFrame)
+                    TryFrame(memberFrame)
                 end
             end
         end
     end
 
     for index = 1, 40 do
-        local memberFrame = _G["CompactRaidFrame" .. index]
-        if memberFrame then
-            callback(memberFrame)
-        end
+        TryFrame(_G["CompactRaidFrame" .. index])
     end
 end
 
@@ -381,6 +608,114 @@ function ns.RefreshAllFrames()
     ForEachCompactFrame(function(memberFrame)
         UpdateCompactFrameInternal(memberFrame)
     end)
+end
+
+local function ChatPrint(message)
+    if DEFAULT_CHAT_FRAME then
+        DEFAULT_CHAT_FRAME:AddMessage(message)
+    else
+        print(message)
+    end
+end
+
+local function PrintDebugInfo()
+    local ok, err = pcall(function()
+        local unit = "player"
+
+        ChatPrint("|cff00ccffShieldFrames|r v1.0.11 debug")
+        ChatPrint("|cff00ccffShieldFrames|r enabled: " .. tostring(IsEnabled()))
+        ChatPrint("|cff00ccffShieldFrames|r in combat: " .. tostring(UnitAffectingCombat(unit)))
+        ChatPrint("|cff00ccffShieldFrames|r midnight APIs: " .. tostring(UsesHealPredictionCalculator()))
+
+        if UsesHealPredictionCalculator() then
+            UpdateHealPredictionCalculator(unit)
+            if PlayerFrame then
+                UpdateMidnightOvershield(PlayerFrame, PlayerFrame.healthbar, unit)
+            end
+
+            local glowShown = PlayerFrame and FrameShowsOvershieldGlow(PlayerFrame)
+            ChatPrint("|cff00ccffShieldFrames|r blizz overAbsorbGlow shown: " .. tostring(glowShown))
+
+            local barShown = PlayerFrame
+                and PlayerFrame.ShieldFramesOverlayBar
+                and PlayerFrame.ShieldFramesOverlayBar:IsShown()
+            ChatPrint("|cff00ccffShieldFrames|r custom overlay bar: " .. tostring(barShown))
+
+            if not glowShown and not barShown then
+                ChatPrint("|cff00ccffShieldFrames|r no overshield glow. Cast a barrier at full HP to test.")
+            end
+            return
+        end
+
+        local absorb = SafeNumber(UnitGetTotalAbsorbs(unit)) or 0
+        local health = SafeNumber(UnitHealth(unit))
+        local maxHealth = SafeNumber(UnitHealthMax(unit))
+        local overshield = GetOvershieldAmount(unit, health, maxHealth)
+
+        ChatPrint("|cff00ccffShieldFrames|r player absorb: " .. tostring(absorb))
+        if health and maxHealth then
+            ChatPrint(string.format(
+                "|cff00ccffShieldFrames|r overshield: %s  health: %s / %s",
+                tostring(overshield or 0),
+                tostring(health),
+                tostring(maxHealth)
+            ))
+        else
+            ChatPrint("|cff00ccffShieldFrames|r health values unavailable.")
+        end
+    end)
+
+    if not ok then
+        ChatPrint("|cffff0000ShieldFrames debug error:|r " .. tostring(err))
+    end
+end
+
+local function OpenSettings()
+    if Settings and Settings.OpenToCategory and ns.categoryID then
+        Settings.OpenToCategory(ns.categoryID)
+        return
+    end
+
+    if Settings and Settings.OpenToCategory then
+        Settings.OpenToCategory(addonName)
+        return
+    end
+
+    ChatPrint("|cff00ccffShieldFrames|r settings are not ready yet. Try again after login.")
+end
+
+local function ShieldFramesSlashHandler(msg)
+    msg = strtrim(msg or "")
+    local command = strlower(strsplit(" ", msg, 2) or "")
+
+    if command == "debug" then
+        PrintDebugInfo()
+        return
+    end
+
+    if command == "help" then
+        ChatPrint("|cff00ccffShieldFrames|r commands:")
+        ChatPrint("  /shieldframes - open settings")
+        ChatPrint("  /sfdebug or /shieldframes debug - print debug info to chat")
+        return
+    end
+
+    if command == "" then
+        OpenSettings()
+        return
+    end
+
+    ChatPrint("|cff00ccffShieldFrames|r unknown command: " .. msg .. " (type /shieldframes help)")
+end
+
+SLASH_SHIELDFRAMES1 = "/shieldframes"
+SLASH_SHIELDFRAMES2 = "/sf"
+SlashCmdList["SHIELDFRAMES"] = ShieldFramesSlashHandler
+
+SLASH_SHIELDFRAMESDEBUG1 = "/sfdebug"
+SLASH_SHIELDFRAMESDEBUG2 = "/shieldframesdebug"
+SlashCmdList["SHIELDFRAMESDEBUG"] = function()
+    PrintDebugInfo()
 end
 
 local eventFrame = CreateFrame("Frame")
@@ -431,58 +766,4 @@ EventUtil.ContinueOnAddOnLoaded(addonName, function()
         end
     end)
 
-    SLASH_SHIELDFRAMES1 = "/shieldframes"
-    SLASH_SHIELDFRAMES2 = "/sf"
-    SLASH_SHIELDFRAMES3 = "/sfdebug"
-
-    local function PrintDebugInfo()
-        local unit = "player"
-        local absorb = UnitGetTotalAbsorbs(unit) or 0
-        local health = UnitHealth(unit)
-        local maxHealth = UnitHealthMax(unit)
-        local overshield = GetOvershieldAmount(unit, health, maxHealth)
-        print("|cff00ccffShieldFrames|r enabled:", tostring(IsEnabled()))
-        print("|cff00ccffShieldFrames|r player absorb:", absorb, "overshield:", overshield or 0, "health:", health, "/", maxHealth)
-        if overshield <= 0 and absorb > 0 then
-            print("|cff00ccffShieldFrames|r absorb is covering missing health only. Test at full HP for overshield.")
-        end
-        if PlayerFrame then
-            print("|cff00ccffShieldFrames|r custom overlay:", tostring(PlayerFrame.ShieldFramesOverlay ~= nil))
-        end
-        ns.RefreshAllFrames()
-    end
-
-    local function OpenSettings()
-        if Settings and Settings.OpenToCategory and ns.categoryID then
-            Settings.OpenToCategory(ns.categoryID)
-        end
-    end
-
-    SlashCmdList["SHIELDFRAMES"] = function(msg)
-        msg = strtrim(msg or "")
-        local command = string.lower(msg:match("^(%S+)") or "")
-
-        if command == "debug" then
-            PrintDebugInfo()
-            return
-        end
-
-        if command == "help" then
-            print("|cff00ccffShieldFrames|r commands:")
-            print("  /sf or /shieldframes - open settings")
-            print("  /sfdebug or /sf debug - print debug info to chat")
-            return
-        end
-
-        if command == "" then
-            OpenSettings()
-            return
-        end
-
-        print("|cff00ccffShieldFrames|r unknown command:", msg, "- type /sf help")
-    end
-
-    SlashCmdList["SHIELDFRAMESDEBUG"] = function()
-        PrintDebugInfo()
-    end
 end)

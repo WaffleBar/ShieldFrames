@@ -2,6 +2,32 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.11] — 2026-07-25
+
+### Fixed
+- Use `GetTotalDamageAbsorbs()` for overlay width (in-bar clamped amount is 0 at full HP)
+- Stop hiding Blizzard's overshield glow with `:Hide()`; fade it instead so detection keeps working
+- Keep overlay active across ticker updates until the absorb actually ends
+
+## [1.0.10] — 2026-07-25
+
+### Fixed
+- Do not branch on secret booleans from `GetDamageAbsorbs`; detect overshield via Blizzard's `overAbsorbGlow` instead
+
+## [1.0.9] — 2026-07-25
+
+### Fixed
+- Midnight (12.0) secret health/absorb values no longer block overshield detection
+- Player, target, and compact frames now use Blizzard's `UnitHealPredictionCalculator` API when available
+- Debug output reports overshield state without requiring readable health numbers
+
+## [1.0.8] — 2026-07-25
+
+### Fixed
+- `/sfdebug` was accidentally registered on the settings handler, so it opened settings instead of printing debug info
+- Debug output no longer silently fails when health or absorb values are secret (common in combat)
+- Slash commands register at load time and print through the default chat frame
+
 ## [1.0.7] — 2026-07-25
 
 ### Fixed
