@@ -2,6 +2,11 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.21] — 2026-07-25
+
+### Fixed
+- Lua errors on party/raid frames when health bar height is secret (stripe tex coord math no longer divides secret values)
+
 ## [1.0.20] — 2026-07-25
 
 ### Fixed

@@ -44,6 +44,19 @@ WowUp Hub shows a **Previews** gallery from the `.previews/` folder at release t
 
 The **addon list thumbnail** uses `Media/AddonIcon.png` via `## IconTexture` in the TOC. The **GitHub / WowUp Hub card banner** uses the repo **Social preview** (`Media/SocialPreview.png`, 1280×640) uploaded under GitHub **Settings → Social preview**.
 
+#### WowUp icon (Install from URL)
+
+If you install with **Get Addons → Install from URL**, WowUp shows the **GitHub account avatar** for `WaffleBar` (the waffle logo), not the addon's `IconTexture`. That is how WowUp's GitHub provider works today — it does not read `Media/AddonIcon.png` for the thumbnail.
+
+What you can do:
+
+1. **In WoW** — Esc → AddOns → ShieldFrames should show the shield/health-bar icon when `Media/AddonIcon.png` is installed (included in release zips).
+2. **WowUp Hub search** — Search for **ShieldFrames** under the WowUpHub provider instead of Install from URL. Hub listings use the repo **Social preview** image when one is set.
+3. **Set the Social preview** — On GitHub: **ShieldFrames → Settings → Social preview → Upload an image**. Use `.github/social-preview.png` from this repo (1280×640).
+4. **Update WowUp** — Remove the old install, then reinstall or update to the latest release (e.g. v1.0.20+) so the zip includes `Media/AddonIcon.png`.
+
+Custom per-addon icons in WowUp for GitHub URL installs are listed as **coming soon** on the [WowUp Hub guide](https://wowup.io/guide/wowup/hub).
+
 #### GitHub topics
 
 Under the repo **About → Topics**, add `unit-frames`. Optional: `warcraft-addon` or `world-of-warcraft-addon`.

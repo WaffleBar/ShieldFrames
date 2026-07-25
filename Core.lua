@@ -292,9 +292,28 @@ local function HideCustomTextures(frame)
     HideOvershieldDisplay(frame)
 end
 
+local function SafeOverlayHeight(healthBar)
+    if not healthBar then
+        return OVERLAY_TILE_SIZE
+    end
+
+    local _, height = healthBar:GetSize()
+    height = SafeNumber(height)
+    if height and height > 0 then
+        return math.floor(height + 0.5)
+    end
+
+    return OVERLAY_TILE_SIZE
+end
+
 local function GetTiledOverlayTexCoord(source, tileSize, totalHeight)
     tileSize = tileSize or OVERLAY_TILE_SIZE
-    totalHeight = totalHeight or OVERLAY_TILE_SIZE
+    totalHeight = SafeNumber(totalHeight)
+    if not totalHeight or totalHeight <= 0 then
+        totalHeight = OVERLAY_TILE_SIZE
+    else
+        totalHeight = math.floor(totalHeight + 0.5)
+    end
 
     if not source then
         return 0, 1, 0, totalHeight / tileSize
@@ -318,7 +337,7 @@ local function ApplyTiledOverlayTexture(overlay, fill, healthBar, tileSize)
     overlay:SetHorizTile(true)
     overlay:SetVertTile(true)
 
-    local _, totalHeight = healthBar:GetSize()
+    local totalHeight = SafeOverlayHeight(healthBar)
     local left, right, top, bottom = GetTiledOverlayTexCoord(overlay, tileSize, totalHeight)
     if left == 0 and right == 1 then
         left, right, top, bottom = GetTiledOverlayTexCoord(fill, tileSize, totalHeight)
@@ -360,7 +379,7 @@ local function ApplyTiledStatusBarFill(fill, healthBar, tileSize)
     fill:SetHorizTile(true)
     fill:SetVertTile(true)
 
-    local _, totalHeight = healthBar:GetSize()
+    local totalHeight = SafeOverlayHeight(healthBar)
     local left, right, top, bottom = GetTiledOverlayTexCoord(fill, tileSize, totalHeight)
     if left == 0 and right == 1 then
         left, right, top, bottom = GetTiledOverlayTexCoord(healthBar, tileSize, totalHeight)
@@ -421,7 +440,8 @@ local function ApplyOvershieldBar(frame, healthBar, overshieldAmount, maxHealth)
 end
 
 local function ApplyOverlayAndGlow(frame, healthBar, overlay, glow, overlayWidth, tileSize, fillAnchor)
-    if not overlay or overlay:IsForbidden() or overlayWidth <= 0 then
+    overlayWidth = SafeNumber(overlayWidth)
+    if not overlay or overlay:IsForbidden() or not overlayWidth or overlayWidth <= 0 then
         return false
     end
 
@@ -461,7 +481,7 @@ local function ApplyOverlayAndGlow(frame, healthBar, overlay, glow, overlayWidth
         ApplyTiledOverlayTexture(overlay, fillAnchor, healthBar, tileSize)
     else
         overlay:SetWidth(overlayWidth)
-        local _, totalHeight = healthBar:GetSize()
+        local totalHeight = SafeOverlayHeight(healthBar)
         overlay:SetTexCoord(0, overlayWidth / tileSize, 0, totalHeight / tileSize)
     end
     overlay:SetTexture("Interface\\RaidFrame\\Shield-Overlay", true, true)
@@ -569,7 +589,7 @@ local function UpdateCompactFrameInternal(frame)
         local settings = GetOverlaySettings()
         local overlayColor = settings.overlayColor
         local tileSize = overlay.tileSize or OVERLAY_TILE_SIZE
-        local _, totalHeight = healthBar:GetSize()
+        local totalHeight = SafeOverlayHeight(healthBar)
 
         if tint and not tint:IsForbidden() then
             tint:SetParent(healthBar)
