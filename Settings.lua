@@ -46,9 +46,15 @@ local function GetGlowColorComponents()
     return color.r or 1, color.g or 1, color.b or 1
 end
 
-local function SetGlowColor(r, g, b)
+local function RefreshFramesDeferred()
+    C_Timer.After(0, RefreshFrames)
+end
+
+local function SetGlowColor(r, g, b, shouldRefresh)
     DB().glowColor = { r = r, g = g, b = b }
-    RefreshFrames()
+    if shouldRefresh ~= false then
+        RefreshFramesDeferred()
+    end
 end
 
 local function GetOverlayColorComponents()
@@ -56,9 +62,19 @@ local function GetOverlayColorComponents()
     return color.r or 1, color.g or 1, color.b or 1
 end
 
-local function SetOverlayColor(r, g, b)
+local function SetOverlayColor(r, g, b, shouldRefresh)
     DB().overlayColor = { r = r, g = g, b = b }
-    RefreshFrames()
+    if shouldRefresh ~= false then
+        RefreshFramesDeferred()
+    end
+end
+
+local function RestorePickerColor(setColor, previousR, previousG, previousB)
+    setColor(previousR, previousG, previousB, false)
+    if ns.RestoreAllBlizzGlowFadeStates then
+        ns.RestoreAllBlizzGlowFadeStates()
+    end
+    RefreshFramesDeferred()
 end
 
 local function OpenRGBColorPicker(getComponents, setColor)
@@ -77,9 +93,9 @@ local function OpenRGBColorPicker(getComponents, setColor)
             cancelFunc = function()
                 local previousValues = ColorPickerFrame:GetPreviousValues()
                 if previousValues and previousValues.r then
-                    setColor(previousValues.r, previousValues.g, previousValues.b)
+                    RestorePickerColor(setColor, previousValues.r, previousValues.g, previousValues.b)
                 else
-                    setColor(previousR, previousG, previousB)
+                    RestorePickerColor(setColor, previousR, previousG, previousB)
                 end
             end,
         })
@@ -95,7 +111,7 @@ local function OpenRGBColorPicker(getComponents, setColor)
         setColor(ColorPickerFrame:GetColorRGB())
     end
     ColorPickerFrame.cancelFunc = function()
-        setColor(previousR, previousG, previousB)
+        RestorePickerColor(setColor, previousR, previousG, previousB)
     end
     ColorPickerFrame.swatchFunc = function()
         setColor(ColorPickerFrame:GetColorRGB())

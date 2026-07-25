@@ -234,7 +234,8 @@ local function MidnightFrameHasOvershield(frame, overshieldAmount, totalAbsorb)
         return hasOvershield
     end
 
-    if FrameShowsOvershieldGlow(frame) then
+    local ok, blizzGlowActive = pcall(FrameShowsOvershieldGlow, frame)
+    if ok and blizzGlowActive then
         return true
     end
 
@@ -740,7 +741,7 @@ local function UpdateCompactFrameInternal(frame)
 end
 
 function ns.UpdateCompactFrame(frame)
-    UpdateCompactFrameInternal(frame)
+    SafeUpdateCompactFrame(frame)
 end
 
 local function UpdateUnitFrame(frame)
@@ -804,6 +805,14 @@ local function UpdateUnitFrame(frame)
     end
 end
 
+local function SafeUpdateCompactFrame(frame)
+    pcall(UpdateCompactFrameInternal, frame)
+end
+
+local function SafeUpdateUnitFrame(frame)
+    pcall(UpdateUnitFrame, frame)
+end
+
 local function ForEachCompactFrame(callback)
     if type(callback) ~= "function" then
         return
@@ -858,41 +867,56 @@ local function RefreshUnitFrameByUnit(unit)
     end
 
     if PlayerFrame and PlayerFrame.unit == unit then
-        UpdateUnitFrame(PlayerFrame)
+        SafeUpdateUnitFrame(PlayerFrame)
     end
     if TargetFrame and TargetFrame.unit == unit then
-        UpdateUnitFrame(TargetFrame)
+        SafeUpdateUnitFrame(TargetFrame)
     end
     if FocusFrame and FocusFrame.unit == unit then
-        UpdateUnitFrame(FocusFrame)
+        SafeUpdateUnitFrame(FocusFrame)
     end
     if PetFrame and PetFrame.unit == unit then
-        UpdateUnitFrame(PetFrame)
+        SafeUpdateUnitFrame(PetFrame)
     end
 
     ForEachCompactFrame(function(memberFrame)
         if memberFrame.displayedUnit == unit then
-            UpdateCompactFrameInternal(memberFrame)
+            SafeUpdateCompactFrame(memberFrame)
         end
     end)
 end
 
+local function RestoreBlizzGlowFadeState(frame)
+    if not frame then
+        return
+    end
+    RestoreBlizzOvershieldGlow(frame, frame.overAbsorbGlow)
+end
+
+function ns.RestoreAllBlizzGlowFadeStates()
+    RestoreBlizzGlowFadeState(PlayerFrame)
+    RestoreBlizzGlowFadeState(TargetFrame)
+    RestoreBlizzGlowFadeState(FocusFrame)
+    RestoreBlizzGlowFadeState(PetFrame)
+    ForEachCompactFrame(RestoreBlizzGlowFadeState)
+end
+
 function ns.RefreshAllFrames()
     if PlayerFrame then
-        UpdateUnitFrame(PlayerFrame)
+        SafeUpdateUnitFrame(PlayerFrame)
     end
     if TargetFrame then
-        UpdateUnitFrame(TargetFrame)
+        SafeUpdateUnitFrame(TargetFrame)
     end
     if FocusFrame then
-        UpdateUnitFrame(FocusFrame)
+        SafeUpdateUnitFrame(FocusFrame)
     end
     if PetFrame then
-        UpdateUnitFrame(PetFrame)
+        SafeUpdateUnitFrame(PetFrame)
     end
 
     ForEachCompactFrame(function(memberFrame)
-        UpdateCompactFrameInternal(memberFrame)
+        SafeUpdateCompactFrame(memberFrame)
     end)
 end
 
@@ -1049,11 +1073,11 @@ EventUtil.ContinueOnAddOnLoaded(addonName, function()
     ns.MergeDefaults()
 
     hooksecurefunc("CompactUnitFrame_UpdateHealPrediction", function(frame)
-        UpdateCompactFrameInternal(frame)
+        SafeUpdateCompactFrame(frame)
     end)
 
     hooksecurefunc("UnitFrameHealPredictionBars_Update", function(frame)
-        UpdateUnitFrame(frame)
+        SafeUpdateUnitFrame(frame)
     end)
 
     C_Timer.NewTicker(0.15, function()
@@ -1061,16 +1085,16 @@ EventUtil.ContinueOnAddOnLoaded(addonName, function()
             return
         end
         if PlayerFrame and PlayerFrame.unit then
-            UpdateUnitFrame(PlayerFrame)
+            SafeUpdateUnitFrame(PlayerFrame)
         end
         if TargetFrame and TargetFrame.unit then
-            UpdateUnitFrame(TargetFrame)
+            SafeUpdateUnitFrame(TargetFrame)
         end
         if FocusFrame and FocusFrame.unit then
-            UpdateUnitFrame(FocusFrame)
+            SafeUpdateUnitFrame(FocusFrame)
         end
         if PetFrame and PetFrame.unit then
-            UpdateUnitFrame(PetFrame)
+            SafeUpdateUnitFrame(PetFrame)
         end
     end)
 

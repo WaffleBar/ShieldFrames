@@ -2,6 +2,12 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.26] — 2026-07-25
+
+### Fixed
+- Color picker Cancel no longer triggers an immediate refresh storm; restores glow fade state and defers frame updates
+- Compact/unit frame updates wrapped in pcall so midnight secret-value edge cases cannot error during settings changes
+
 ## [1.0.25] — 2026-07-25
 
 ### Fixed
