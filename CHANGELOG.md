@@ -2,6 +2,13 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.3] — 2026-07-25
+
+### Fixed
+- Settings panel now registers correctly (prefixed setting IDs, proper SavedVariables binding)
+- Overshield overlay now updates on player, target, focus, and pet frames as well as compact party/raid frames
+- Added absorb/health event listeners so overlays refresh without relying solely on heal prediction updates
+
 ## [1.0.2] — 2026-07-25
 
 ### Added

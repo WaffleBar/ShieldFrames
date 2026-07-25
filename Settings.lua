@@ -1,5 +1,7 @@
 local addonName, ns = ...
 
+ShieldFramesDB = ShieldFramesDB or {}
+
 local function DB()
     return ns.GetDB()
 end
@@ -10,49 +12,33 @@ local function RefreshFrames()
     end
 end
 
-local function CreateCheckbox(category, key, label, tooltip)
-    local setting = Settings.RegisterProxySetting(
+local function MakeSetting(category, key, name, defaultValue)
+    local variable = addonName .. "_" .. key
+    local setting = Settings.RegisterAddOnSetting(
         category,
+        variable,
         key,
-        Settings.VarType.Boolean,
-        label,
-        ns.defaults[key],
-        function()
-            return DB()[key]
-        end,
-        function(value)
-            DB()[key] = value
-        end
+        ShieldFramesDB,
+        type(defaultValue),
+        name,
+        defaultValue
     )
-
-    local init = Settings.CreateCheckbox(category, setting, tooltip)
     setting:SetValueChangedCallback(RefreshFrames)
-    return init
+    return setting
+end
+
+local function CreateCheckbox(category, key, label, tooltip)
+    local setting = MakeSetting(category, key, label, ns.defaults[key])
+    return Settings.CreateCheckbox(category, setting, tooltip)
 end
 
 local function CreateSlider(category, key, label, min, max, step, tooltip, formatValue)
-    local setting = Settings.RegisterProxySetting(
-        category,
-        key,
-        Settings.VarType.Number,
-        label,
-        ns.defaults[key],
-        function()
-            return DB()[key]
-        end,
-        function(value)
-            DB()[key] = value
-        end
-    )
-
+    local setting = MakeSetting(category, key, label, ns.defaults[key])
     local options = Settings.CreateSliderOptions(min, max, step)
     options:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, formatValue or function(value)
         return string.format("%d%%", value)
     end)
-
-    local init = Settings.CreateSlider(category, setting, options, tooltip)
-    setting:SetValueChangedCallback(RefreshFrames)
-    return init
+    return Settings.CreateSlider(category, setting, options, tooltip)
 end
 
 local function GetGlowColorComponents()
@@ -94,17 +80,15 @@ local function OpenGitHub()
     end
 end
 
-local ADDON_DESCRIPTION = "ShieldFrames enhances Blizzard's default compact party and raid frames by visualizing overshield absorbs.|n|nInstead of a thin glow on the right edge of the health bar, ShieldFrames draws a semi-transparent overlay that extends leftward in proportion to the actual overshield value. The overlay never extends beyond the health bar frame.|n|nRequires Interface > Raid Frames > Display Incoming Heals."
+local ADDON_DESCRIPTION = "Enhances Blizzard party, raid, player, and target frames by visualizing overshield absorbs.|n|nInstead of a thin glow on the right edge of the health bar, ShieldFrames draws a semi-transparent overlay that extends leftward in proportion to the actual overshield value.|n|nRequires Interface > Raid Frames > Display Incoming Heals for party and raid frames."
 
 local function InitializeSettings()
-    local category, layout = Settings.RegisterVerticalLayoutCategory("ShieldFrames")
-    Settings.RegisterAddOnCategory(category)
-    ns.categoryID = category:GetID()
+    local category, layout = Settings.RegisterVerticalLayoutCategory(addonName)
 
     layout:AddInitializer(CreateSettingsListSectionHeaderInitializer("About"))
 
     layout:AddInitializer(CreateSettingsButtonInitializer(
-        "ShieldFrames",
+        addonName,
         "View on GitHub",
         OpenGitHub,
         ADDON_DESCRIPTION,
@@ -113,16 +97,16 @@ local function InitializeSettings()
 
     layout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Overshield Display"))
 
-    local enabledInit = CreateCheckbox(
+    CreateCheckbox(
         category,
         "enabled",
         "Enable ShieldFrames",
-        "Show overshield absorb as a transparent bar extending left across Blizzard party and raid health bars. Requires Interface > Raid Frames > Display Incoming Heals."
+        "Show overshield absorb as a transparent bar extending left across supported Blizzard health bars. Requires Interface > Raid Frames > Display Incoming Heals for party and raid frames."
     )
 
     layout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Appearance"))
 
-    local overlayOpacityInit = CreateSlider(
+    CreateSlider(
         category,
         "overlayOpacity",
         "Overlay Opacity",
@@ -132,14 +116,14 @@ local function InitializeSettings()
         "Transparency of the overshield fill drawn over the health bar."
     )
 
-    local glowInit = CreateCheckbox(
+    CreateCheckbox(
         category,
         "showGlow",
         "Show Edge Glow",
         "Draw a bright edge on the left side of the overshield overlay."
     )
 
-    local glowOpacityInit = CreateSlider(
+    CreateSlider(
         category,
         "glowOpacity",
         "Glow Opacity",
@@ -149,7 +133,7 @@ local function InitializeSettings()
         "Brightness of the overshield edge glow."
     )
 
-    local glowColorInit = layout:AddInitializer(CreateSettingsButtonInitializer(
+    layout:AddInitializer(CreateSettingsButtonInitializer(
         "Glow Color",
         "Choose Color",
         OpenGlowColorPicker,
@@ -157,33 +141,13 @@ local function InitializeSettings()
         true
     ))
 
-    overlayOpacityInit:SetParentInitializer(enabledInit, function()
-        return DB().enabled
-    end)
-    overlayOpacityInit:AddShownPredicate(function()
-        return DB().enabled
-    end)
-
-    glowInit:SetParentInitializer(enabledInit, function()
-        return DB().enabled
-    end)
-    glowInit:AddShownPredicate(function()
-        return DB().enabled
-    end)
-
-    glowOpacityInit:SetParentInitializer(glowInit, function()
-        return DB().showGlow
-    end)
-    glowOpacityInit:AddShownPredicate(function()
-        return DB().enabled and DB().showGlow
-    end)
-
-    glowColorInit:SetParentInitializer(glowInit, function()
-        return DB().showGlow
-    end)
-    glowColorInit:AddShownPredicate(function()
-        return DB().enabled and DB().showGlow
-    end)
+    Settings.RegisterAddOnCategory(category)
+    ns.categoryID = category:GetID()
 end
 
-EventUtil.ContinueOnPlayerLogin(InitializeSettings)
+EventUtil.ContinueOnAddOnLoaded(addonName, function()
+    if ns.MergeDefaults then
+        ns.MergeDefaults()
+    end
+    InitializeSettings()
+end)
