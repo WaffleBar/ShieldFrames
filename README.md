@@ -1,10 +1,10 @@
 # ShieldFrames
 
-**Overshield overlay for Blizzard's default party and raid compact frames.**
+**Overshield overlay for Blizzard's default unit frames** — player, target, focus, pet, and compact party/raid frames.
 
 Blizzard's default overshield indicator is a thin glow line on the right edge of the health bar. ShieldFrames replaces that with a **semi-transparent overlay** that extends **leftward** across the bar in proportion to the **actual overshield amount** — absorb beyond missing health. The overlay is capped so it never extends beyond the health bar frame.
 
-Works with default **CompactPartyFrame** and **CompactRaidFrame** only. No custom unit frames, no frame replacements.
+Works with default **player, target, focus, pet**, and **CompactPartyFrame** / **CompactRaidFrame** frames. No custom unit frames, no frame replacements.
 
 ## Features
 

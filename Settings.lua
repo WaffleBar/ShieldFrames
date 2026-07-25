@@ -80,10 +80,12 @@ local function OpenGitHub()
     end
 end
 
-local ADDON_DESCRIPTION = "Enhances Blizzard party, raid, player, and target frames by visualizing overshield absorbs.|n|nInstead of a thin glow on the right edge of the health bar, ShieldFrames draws a semi-transparent overlay that extends leftward in proportion to the actual overshield value.|n|nRequires Interface > Raid Frames > Display Incoming Heals for party and raid frames."
+local ADDON_DESCRIPTION = "Enhances Blizzard party, raid, player, and target frames by visualizing overshield absorbs.|n|nInstead of a thin glow on the right edge of the health bar, ShieldFrames draws a semi-transparent overlay that extends leftward in proportion to the actual overshield value.|n|nParty and raid frames also require Interface > Raid Frames > Display Incoming Heals."
 
 local function InitializeSettings()
     local category, layout = Settings.RegisterVerticalLayoutCategory(addonName)
+    Settings.RegisterAddOnCategory(category)
+    ns.categoryID = category:GetID()
 
     layout:AddInitializer(CreateSettingsListSectionHeaderInitializer("About"))
 
@@ -101,7 +103,7 @@ local function InitializeSettings()
         category,
         "enabled",
         "Enable ShieldFrames",
-        "Show overshield absorb as a transparent bar extending left across supported Blizzard health bars. Requires Interface > Raid Frames > Display Incoming Heals for party and raid frames."
+        "Show overshield absorb as a transparent bar extending left across supported Blizzard health bars. Party and raid frames also require Interface > Raid Frames > Display Incoming Heals."
     )
 
     layout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Appearance"))
@@ -140,12 +142,9 @@ local function InitializeSettings()
         "Tint for the overshield edge glow.",
         true
     ))
-
-    Settings.RegisterAddOnCategory(category)
-    ns.categoryID = category:GetID()
 end
 
-EventUtil.ContinueOnAddOnLoaded(addonName, function()
+EventUtil.ContinueOnPlayerLogin(function()
     if ns.MergeDefaults then
         ns.MergeDefaults()
     end

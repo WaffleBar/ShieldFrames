@@ -2,6 +2,13 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.4] — 2026-07-25
+
+### Fixed
+- Settings panel registers on player login so controls actually appear
+- Player/target frames use `totalAbsorbBarOverlay` (correct Blizzard element name)
+- Player frame overshield overlay follows the proven UnitFrame absorb bar layout
+
 ## [1.0.3] — 2026-07-25
 
 ### Fixed
