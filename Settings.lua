@@ -55,23 +55,30 @@ local function OpenGlowColorPicker()
     local r, g, b = GetGlowColorComponents()
     local previousR, previousG, previousB = r, g, b
 
+    local function ApplySelectedColor()
+        local newR, newG, newB = ColorPickerFrame:GetColorRGB()
+        SetGlowColor(newR, newG, newB)
+    end
+
+    local function RestorePreviousColor()
+        SetGlowColor(previousR, previousG, previousB)
+    end
+
     ColorPickerFrame:SetupColorPickerAndShow({
         r = r,
         g = g,
         b = b,
         hasOpacity = false,
-        swatchFunc = function()
-            SetGlowColor(ColorPickerFrame:GetColorRGB())
-        end,
-        cancelFunc = function()
-            local previousValues = ColorPickerFrame:GetPreviousValues()
-            if previousValues and previousValues.r then
-                SetGlowColor(previousValues.r, previousValues.g, previousValues.b)
-            else
-                SetGlowColor(previousR, previousG, previousB)
-            end
-        end,
+        swatchFunc = ApplySelectedColor,
+        func = ApplySelectedColor,
+        cancelFunc = RestorePreviousColor,
     })
+
+    ColorPickerFrame:SetFrameStrata("FULLSCREEN_DIALOG")
+    ColorPickerFrame:Raise()
+    if ColorPickerFrame.NineSlice then
+        ColorPickerFrame.NineSlice:SetFrameStrata("FULLSCREEN_DIALOG")
+    end
 end
 
 local function OpenGitHub()

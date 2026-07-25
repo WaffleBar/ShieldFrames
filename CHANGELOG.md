@@ -2,6 +2,13 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.5] — 2026-07-25
+
+### Fixed
+- Player frame overlay now targets modern `TiledOverlay`/`FillMask` absorb elements
+- Health reads fall back to `UnitHealth` when status bar values are secret
+- Color picker raises above the Settings panel so Okay/Cancel respond
+
 ## [1.0.4] — 2026-07-25
 
 ### Fixed

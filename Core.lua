@@ -35,6 +35,35 @@ function ns.MergeDefaults()
     MergeDefaults(GetDB(), ns.defaults)
 end
 
+local function IsSecret(value)
+    return issecretvalue and issecretvalue(value)
+end
+
+local function SafeNumber(value)
+    if value == nil or IsSecret(value) then
+        return nil
+    end
+    return value
+end
+
+local function GetUnitHealthValues(frame, unit)
+    local healthBar = frame.healthbar or frame.healthBar
+    if not healthBar then
+        return
+    end
+
+    local curHealth = SafeNumber(healthBar:GetValue())
+    local _, maxHealth = healthBar:GetMinMaxValues()
+    maxHealth = SafeNumber(maxHealth)
+
+    if (not curHealth or not maxHealth) and unit then
+        curHealth = SafeNumber(UnitHealth(unit))
+        maxHealth = SafeNumber(UnitHealthMax(unit))
+    end
+
+    return curHealth, maxHealth, healthBar
+end
+
 local function IsEnabled()
     return GetDB().enabled ~= false
 end
@@ -65,6 +94,7 @@ local function GetOvershieldAmount(unit, curHealth, maxHealth)
     end
 
     local totalAbsorb = UnitGetTotalAbsorbs(unit) or 0
+    totalAbsorb = SafeNumber(totalAbsorb) or 0
     if totalAbsorb <= 0 then
         return 0
     end
@@ -79,16 +109,35 @@ local function GetOvershieldAmount(unit, curHealth, maxHealth)
         return 0
     end
 
-    return overshield
+    return overshield, totalAbsorb
 end
 
-local function ApplyOverlayAndGlow(healthBar, overlay, glow, overlayWidth)
+local function GetUnitFrameOverlay(frame, absorbBar)
+    if absorbBar and not absorbBar:IsForbidden() then
+        if absorbBar.TiledOverlay and not absorbBar.TiledOverlay:IsForbidden() then
+            return absorbBar.TiledOverlay, absorbBar.tiledOverlaySize or absorbBar.tileSize
+        end
+        if absorbBar.overlay and not absorbBar.overlay:IsForbidden() then
+            return absorbBar.overlay, absorbBar.overlay.tileSize or absorbBar.tileSize
+        end
+    end
+
+    if frame.totalAbsorbBarOverlay and not frame.totalAbsorbBarOverlay:IsForbidden() then
+        return frame.totalAbsorbBarOverlay, frame.totalAbsorbBarOverlay.tileSize
+    end
+
+    if frame.totalAbsorbOverlay and not frame.totalAbsorbOverlay:IsForbidden() then
+        return frame.totalAbsorbOverlay, frame.totalAbsorbOverlay.tileSize
+    end
+end
+
+local function ApplyOverlayAndGlow(healthBar, overlay, glow, overlayWidth, tileSize)
     if not overlay or overlay:IsForbidden() or overlayWidth <= 0 then
         return false
     end
 
     local settings = GetOverlaySettings()
-    local tileSize = overlay.tileSize or 32
+    tileSize = tileSize or overlay.tileSize or 32
     local _, totalHeight = healthBar:GetSize()
 
     overlay:SetParent(healthBar)
@@ -128,8 +177,9 @@ local function UpdateCompactFrameInternal(frame)
         return
     end
 
-    local curHealth = healthBar:GetValue()
+    local curHealth = SafeNumber(healthBar:GetValue())
     local _, maxHealth = healthBar:GetMinMaxValues()
+    maxHealth = SafeNumber(maxHealth)
     if not curHealth or not maxHealth or maxHealth <= 0 then
         return
     end
@@ -142,8 +192,8 @@ local function UpdateCompactFrameInternal(frame)
         return
     end
 
-    local barWidth = healthBar:GetWidth()
-    if barWidth <= 0 then
+    local barWidth = SafeNumber(healthBar:GetWidth())
+    if not barWidth or barWidth <= 0 then
         return
     end
 
@@ -153,7 +203,6 @@ local function UpdateCompactFrameInternal(frame)
         return
     end
 
-    local anchor = healthBar
     if absorbBar and not absorbBar:IsForbidden() and absorbBar:IsShown() then
         overlay:ClearAllPoints()
         overlay:SetParent(healthBar)
@@ -179,7 +228,7 @@ local function UpdateCompactFrameInternal(frame)
         return
     end
 
-    ApplyOverlayAndGlow(healthBar, overlay, glow, overlayWidth)
+    ApplyOverlayAndGlow(healthBar, overlay, glow, overlayWidth, overlay.tileSize)
 end
 
 function ns.UpdateCompactFrame(frame)
@@ -187,77 +236,69 @@ function ns.UpdateCompactFrame(frame)
 end
 
 local function UpdateUnitFrame(frame)
-    if not IsEnabled() or not frame or frame:IsForbidden() or not frame.unit or not frame.healthbar then
+    if not IsEnabled() or not frame or frame:IsForbidden() or not frame.unit then
         return
     end
 
-    if not frame.myHealPredictionBar then
+    local curHealth, maxHealth, healthBar = GetUnitHealthValues(frame, frame.unit)
+    if not healthBar or healthBar:IsForbidden() or not curHealth or not maxHealth or maxHealth <= 0 then
         return
     end
 
-    local healthBar = frame.healthbar
     local absorbBar = frame.totalAbsorbBar
     local glow = frame.overAbsorbGlow
-    local overlay = frame.totalAbsorbBarOverlay or frame.totalAbsorbOverlay
-
-    if not absorbBar or absorbBar:IsForbidden() or not glow or glow:IsForbidden() then
-        return
-    end
-
-    local curHealth = healthBar:GetValue()
-    local _, maxHealth = healthBar:GetMinMaxValues()
-    if not curHealth or curHealth <= 0 or not maxHealth or maxHealth <= 0 then
+    if not glow or glow:IsForbidden() then
         return
     end
 
     local totalAbsorb = UnitGetTotalAbsorbs(frame.unit) or 0
+    totalAbsorb = SafeNumber(totalAbsorb) or 0
     if totalAbsorb <= 0 then
         glow:Hide()
         return
     end
 
-    local effectiveHealth = curHealth + totalAbsorb
-    local healthBarTexture = healthBar:GetStatusBarTexture()
-    local absorbFillMaskTexture = absorbBar.FillMask
-
-    if effectiveHealth > maxHealth and absorbBar.UpdateFillPosition and healthBarTexture then
-        local xOffset = (maxHealth / effectiveHealth) - 1
-        absorbBar:UpdateFillPosition(healthBarTexture, totalAbsorb, xOffset)
-
-        local overshield = GetOvershieldAmount(frame.unit, curHealth, maxHealth)
-        if overshield > 0 and overlay and not overlay:IsForbidden() then
-            local barWidth = healthBar:GetWidth()
-            local fillWidth = (curHealth / maxHealth) * barWidth
-            local overlayWidth = Clamp((overshield / maxHealth) * barWidth, 0, math.min(fillWidth, barWidth))
-            ApplyOverlayAndGlow(healthBar, overlay, glow, overlayWidth)
-            return
-        end
-
-        if absorbFillMaskTexture and not absorbFillMaskTexture:IsForbidden() then
-            local settings = GetOverlaySettings()
-            glow:ClearAllPoints()
-            glow:SetPoint("TOPLEFT", absorbFillMaskTexture, "TOPLEFT", GLOW_EDGE_OFFSET, 0)
-            glow:SetPoint("BOTTOMLEFT", absorbFillMaskTexture, "BOTTOMLEFT", GLOW_EDGE_OFFSET, 0)
-            if settings.showGlow then
-                local color = settings.glowColor
-                glow:SetVertexColor(color.r or 1, color.g or 1, color.b or 1, settings.glowAlpha)
-                glow:Show()
-            else
-                glow:Hide()
-            end
-        end
+    local overshield, totalAbsorbAmount = GetOvershieldAmount(frame.unit, curHealth, maxHealth)
+    if overshield <= 0 then
+        glow:Hide()
         return
     end
 
-    if glow and not glow:IsForbidden() then
-        if healthBarTexture and not healthBarTexture:IsForbidden() then
-            glow:ClearAllPoints()
-            glow:SetPoint("TOPLEFT", healthBarTexture, "TOPRIGHT", GLOW_EDGE_OFFSET, 0)
-            glow:SetPoint("BOTTOMLEFT", healthBarTexture, "BOTTOMRIGHT", GLOW_EDGE_OFFSET, 0)
-            glow:SetAlpha(GetOverlaySettings().glowAlpha)
-        else
-            glow:Hide()
+    local healthBarTexture = healthBar:GetStatusBarTexture()
+    local effectiveHealth = curHealth + totalAbsorbAmount
+    local overlay, tileSize = GetUnitFrameOverlay(frame, absorbBar)
+    local fillMask = absorbBar and absorbBar.FillMask
+
+    if absorbBar and not absorbBar:IsForbidden() and absorbBar.UpdateFillPosition and healthBarTexture and not healthBarTexture:IsForbidden() then
+        if effectiveHealth > maxHealth then
+            local xOffset = (maxHealth / effectiveHealth) - 1
+            absorbBar:UpdateFillPosition(healthBarTexture, totalAbsorbAmount, xOffset)
         end
+    end
+
+    local barWidth = SafeNumber(healthBar:GetWidth())
+    if not barWidth or barWidth <= 0 then
+        return
+    end
+
+    local fillWidth = (curHealth / maxHealth) * barWidth
+    local overlayWidth = Clamp((overshield / maxHealth) * barWidth, 0, math.min(fillWidth, barWidth))
+    if overlayWidth <= 0 then
+        return
+    end
+
+    if overlay then
+        ApplyOverlayAndGlow(healthBar, overlay, glow, overlayWidth, tileSize)
+        return
+    end
+
+    if fillMask and not fillMask:IsForbidden() and GetOverlaySettings().showGlow then
+        local color = GetOverlaySettings().glowColor
+        glow:ClearAllPoints()
+        glow:SetPoint("TOPLEFT", fillMask, "TOPLEFT", GLOW_EDGE_OFFSET, 0)
+        glow:SetPoint("BOTTOMLEFT", fillMask, "BOTTOMLEFT", GLOW_EDGE_OFFSET, 0)
+        glow:SetVertexColor(color.r or 1, color.g or 1, color.b or 1, GetOverlaySettings().glowAlpha)
+        glow:Show()
     end
 end
 
@@ -267,44 +308,44 @@ local function ForEachCompactFrame(callback)
     end
 
     if CompactPartyFrame and CompactPartyFrame.members then
-        for _, frame in pairs(CompactPartyFrame.members) do
-            callback(frame)
+        for _, memberFrame in pairs(CompactPartyFrame.members) do
+            callback(memberFrame)
         end
     end
 
     if CompactPartyFrame and CompactPartyFrame.flowFrames then
-        for _, frame in ipairs(CompactPartyFrame.flowFrames) do
-            callback(frame)
+        for _, memberFrame in ipairs(CompactPartyFrame.flowFrames) do
+            callback(memberFrame)
         end
     end
 
     for index = 1, 5 do
-        local frame = _G["CompactPartyFrameMember" .. index]
-        if frame then
-            callback(frame)
+        local memberFrame = _G["CompactPartyFrameMember" .. index]
+        if memberFrame then
+            callback(memberFrame)
         end
     end
 
     if CompactRaidFrameContainer and CompactRaidFrameContainer.flowFrames then
-        for _, frame in ipairs(CompactRaidFrameContainer.flowFrames) do
-            callback(frame)
+        for _, memberFrame in ipairs(CompactRaidFrameContainer.flowFrames) do
+            callback(memberFrame)
         end
     end
 
     if CompactRaidFrameContainer and CompactRaidFrameContainer.groups then
         for _, group in pairs(CompactRaidFrameContainer.groups) do
             if group and group.flowFrames then
-                for _, frame in ipairs(group.flowFrames) do
-                    callback(frame)
+                for _, memberFrame in ipairs(group.flowFrames) do
+                    callback(memberFrame)
                 end
             end
         end
     end
 
     for index = 1, 40 do
-        local frame = _G["CompactRaidFrame" .. index]
-        if frame then
-            callback(frame)
+        local memberFrame = _G["CompactRaidFrame" .. index]
+        if memberFrame then
+            callback(memberFrame)
         end
     end
 end
@@ -327,9 +368,9 @@ local function RefreshUnitFrameByUnit(unit)
         UpdateUnitFrame(PetFrame)
     end
 
-    ForEachCompactFrame(function(frame)
-        if frame.displayedUnit == unit then
-            UpdateCompactFrameInternal(frame)
+    ForEachCompactFrame(function(memberFrame)
+        if memberFrame.displayedUnit == unit then
+            UpdateCompactFrameInternal(memberFrame)
         end
     end)
 end
@@ -348,8 +389,8 @@ function ns.RefreshAllFrames()
         UpdateUnitFrame(PetFrame)
     end
 
-    ForEachCompactFrame(function(frame)
-        UpdateCompactFrameInternal(frame)
+    ForEachCompactFrame(function(memberFrame)
+        UpdateCompactFrameInternal(memberFrame)
     end)
 end
 
@@ -396,8 +437,9 @@ EventUtil.ContinueOnAddOnLoaded(addonName, function()
             print("|cff00ccffShieldFrames|r enabled:", tostring(IsEnabled()))
             print("|cff00ccffShieldFrames|r player absorb:", absorb, "overshield:", overshield or 0, "health:", health, "/", maxHealth)
             if PlayerFrame then
-                print("|cff00ccffShieldFrames|r PlayerFrame overlay:", tostring(PlayerFrame.totalAbsorbBarOverlay ~= nil))
-                print("|cff00ccffShieldFrames|r PlayerFrame heal prediction:", tostring(PlayerFrame.myHealPredictionBar ~= nil))
+                local overlay, tileSize = GetUnitFrameOverlay(PlayerFrame, PlayerFrame.totalAbsorbBar)
+                print("|cff00ccffShieldFrames|r overlay found:", tostring(overlay ~= nil), "tileSize:", tostring(tileSize))
+                print("|cff00ccffShieldFrames|r absorbBar:", tostring(PlayerFrame.totalAbsorbBar ~= nil), "FillMask:", tostring(PlayerFrame.totalAbsorbBar and PlayerFrame.totalAbsorbBar.FillMask ~= nil))
             end
             ns.RefreshAllFrames()
             return
