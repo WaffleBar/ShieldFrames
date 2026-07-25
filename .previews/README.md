@@ -21,7 +21,7 @@ This folder is **not** packaged into the WoW addon zip (see `.pkgmeta`).
 
 Replace these with your own screenshots anytime; commit and tag a new release so WowUp Hub re-indexes the gallery.
 
-Regenerate the **GitHub / WowUp card banner** (1280×640) with:
+Regenerate the **GitHub / WowUp card thumbnail** (1280×1280 square) with:
 
 ```powershell
 csc /out:tools/MakeSocialPreview.exe tools/MakeSocialPreview.cs

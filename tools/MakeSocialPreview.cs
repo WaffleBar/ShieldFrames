@@ -6,6 +6,8 @@ using System.IO;
 
 public static class MakeSocialPreview
 {
+    const int Size = 1280;
+
     static readonly Color BgTop = Color.FromArgb(255, 8, 12, 18);
     static readonly Color BgBottom = Color.FromArgb(255, 14, 22, 32);
     static readonly Color TitleColor = Color.FromArgb(255, 248, 250, 252);
@@ -29,16 +31,19 @@ public static class MakeSocialPreview
         string pngPath = Path.Combine(githubDir, "social-preview.png");
         string jpgGithubPath = Path.Combine(githubDir, "social-preview.jpg");
         string jpgPath = Path.Combine(mediaDir, "SocialPreview.jpg");
+        string pngMediaPath = Path.Combine(mediaDir, "SocialPreview.png");
 
-        using (var banner = RenderBanner(1280, 640))
+        using (var banner = RenderBanner(Size, Size))
         {
             banner.Save(pngPath, ImageFormat.Png);
+            banner.Save(pngMediaPath, ImageFormat.Png);
             SaveJpeg(banner, jpgGithubPath, 92);
             SaveJpeg(banner, jpgPath, 92);
         }
 
         Console.WriteLine("Wrote " + pngPath);
         Console.WriteLine("Wrote " + jpgGithubPath);
+        Console.WriteLine("Wrote " + pngMediaPath);
         Console.WriteLine("Wrote " + jpgPath);
     }
 
@@ -69,10 +74,10 @@ public static class MakeSocialPreview
     {
         using (var path = new GraphicsPath())
         {
-            path.AddEllipse(width * 0.52f, height * 0.05f, width * 0.55f, height * 0.9f);
+            path.AddEllipse(width * 0.08f, height * 0.34f, width * 0.84f, height * 0.42f);
             using (var brush = new PathGradientBrush(path))
             {
-                brush.CenterColor = Color.FromArgb(36, 77, 244, 251);
+                brush.CenterColor = Color.FromArgb(42, 77, 244, 251);
                 brush.SurroundColors = new[] { Color.FromArgb(0, 77, 244, 251) };
                 g.FillPath(brush, path);
             }
@@ -81,33 +86,36 @@ public static class MakeSocialPreview
 
     static void DrawCopy(Graphics g, int width, int height)
     {
-        float left = 72f;
-        float top = 150f;
-
-        using (var titleFont = new Font("Segoe UI", 78f, FontStyle.Bold, GraphicsUnit.Pixel))
-        using (var subtitleFont = new Font("Segoe UI", 30f, FontStyle.Regular, GraphicsUnit.Pixel))
-        using (var detailFont = new Font("Segoe UI", 22f, FontStyle.Regular, GraphicsUnit.Pixel))
-        using (var creditFont = new Font("Segoe UI", 18f, FontStyle.Regular, GraphicsUnit.Pixel))
+        using (var titleFont = new Font("Segoe UI", 92f, FontStyle.Bold, GraphicsUnit.Pixel))
+        using (var subtitleFont = new Font("Segoe UI", 34f, FontStyle.Regular, GraphicsUnit.Pixel))
+        using (var detailFont = new Font("Segoe UI", 24f, FontStyle.Regular, GraphicsUnit.Pixel))
+        using (var creditFont = new Font("Segoe UI", 20f, FontStyle.Regular, GraphicsUnit.Pixel))
         using (var titleBrush = new SolidBrush(TitleColor))
         using (var subtitleBrush = new SolidBrush(SubtitleColor))
         using (var detailBrush = new SolidBrush(MutedColor))
         {
-            g.DrawString("ShieldFrames", titleFont, titleBrush, left, top);
-            g.DrawString("Overshield overlay", subtitleFont, subtitleBrush, left, top + 98f);
-            g.DrawString("for Blizzard unit frames", subtitleFont, subtitleBrush, left, top + 138f);
-            g.DrawString("Player  ·  Target  ·  Party  ·  Raid", detailFont, detailBrush, left, top + 210f);
-            g.DrawString("By Burn and Waffle", creditFont, detailBrush, left, height - 56f);
+            DrawCentered(g, "ShieldFrames", titleFont, titleBrush, width, 118f);
+            DrawCentered(g, "Overshield overlay", subtitleFont, subtitleBrush, width, 228f);
+            DrawCentered(g, "for Blizzard unit frames", subtitleFont, subtitleBrush, width, 272f);
+            DrawCentered(g, "Player  ·  Target  ·  Party  ·  Raid", detailFont, detailBrush, width, height - 72f);
+            DrawCentered(g, "By Burn and Waffle", creditFont, detailBrush, width, height - 40f);
         }
+    }
+
+    static void DrawCentered(Graphics g, string text, Font font, Brush brush, int width, float y)
+    {
+        SizeF size = g.MeasureString(text, font);
+        g.DrawString(text, font, brush, (width - size.Width) / 2f, y);
     }
 
     static void DrawHeroBar(Graphics g, int width, int height)
     {
-        float barWidth = 520f;
-        float barHeight = 92f;
-        float x = width - barWidth - 88f;
-        float y = (height - barHeight) / 2f;
-        float radius = 10f;
-        float frame = 4f;
+        float barWidth = width * 0.78f;
+        float barHeight = 118f;
+        float x = (width - barWidth) / 2f;
+        float y = height * 0.46f;
+        float radius = 12f;
+        float frame = 5f;
         float healthRatio = 0.62f;
 
         var outer = new RectangleF(x, y, barWidth, barHeight);
@@ -159,30 +167,30 @@ public static class MakeSocialPreview
         }
     }
 
-    static void DrawGlowEdge(Graphics g, float x, float y, float height)
+    static void DrawGlowEdge(Graphics g, float x, float y, float barHeight)
     {
         using (var glowBrush = new LinearGradientBrush(
-            new RectangleF(x - 10f, y, 20f, height),
+            new RectangleF(x - 12f, y, 24f, barHeight),
             Color.FromArgb(0, GlowColor),
             GlowColor,
             LinearGradientMode.Horizontal))
         {
-            g.FillRectangle(glowBrush, x - 10f, y, 20f, height);
+            g.FillRectangle(glowBrush, x - 12f, y, 24f, barHeight);
         }
 
-        using (var corePen = new Pen(GlowColor, 3f))
+        using (var corePen = new Pen(GlowColor, 4f))
         {
-            g.DrawLine(corePen, x, y + 4f, x, y + height - 4f);
+            g.DrawLine(corePen, x, y + 6f, x, y + barHeight - 6f);
         }
     }
 
     static void DrawBarLabel(Graphics g, string text, RectangleF rect, Color color)
     {
-        using (var font = new Font("Segoe UI Semibold", 18f, FontStyle.Bold, GraphicsUnit.Pixel))
+        using (var font = new Font("Segoe UI Semibold", 22f, FontStyle.Bold, GraphicsUnit.Pixel))
         using (var brush = new SolidBrush(color))
         {
             var size = g.MeasureString(text, font);
-            g.DrawString(text, font, brush, rect.X + 14f, rect.Y + (rect.Height - size.Height) / 2f);
+            g.DrawString(text, font, brush, rect.X + 18f, rect.Y + (rect.Height - size.Height) / 2f);
         }
     }
 
