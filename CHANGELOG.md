@@ -2,6 +2,12 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.6] — 2026-07-25
+
+### Fixed
+- Player/target frames now draw a dedicated ShieldFrames overlay texture on the health bar
+- Color picker closes Settings first so Okay/Cancel receive clicks, then reopens settings
+
 ## [1.0.5] — 2026-07-25
 
 ### Fixed

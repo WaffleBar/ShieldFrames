@@ -51,34 +51,59 @@ local function SetGlowColor(r, g, b)
     RefreshFrames()
 end
 
+local function ReopenSettings()
+    if ns.categoryID and Settings and Settings.OpenToCategory then
+        C_Timer.After(0.05, function()
+            Settings.OpenToCategory(ns.categoryID)
+        end)
+    end
+end
+
 local function OpenGlowColorPicker()
     local r, g, b = GetGlowColorComponents()
     local previousR, previousG, previousB = r, g, b
+    local reopenSettings = SettingsPanel and SettingsPanel:IsShown()
+
+    if reopenSettings then
+        HideUIPanel(SettingsPanel)
+    end
 
     local function ApplySelectedColor()
         local newR, newG, newB = ColorPickerFrame:GetColorRGB()
         SetGlowColor(newR, newG, newB)
     end
 
-    local function RestorePreviousColor()
-        SetGlowColor(previousR, previousG, previousB)
+    local function ClosePicker(restorePrevious)
+        if restorePrevious then
+            SetGlowColor(previousR, previousG, previousB)
+        end
+        if ColorPickerFrame:IsShown() then
+            ColorPickerFrame:Hide()
+        end
+        if reopenSettings then
+            ReopenSettings()
+        end
     end
 
-    ColorPickerFrame:SetupColorPickerAndShow({
-        r = r,
-        g = g,
-        b = b,
-        hasOpacity = false,
-        swatchFunc = ApplySelectedColor,
-        func = ApplySelectedColor,
-        cancelFunc = RestorePreviousColor,
-    })
-
+    ColorPickerFrame:Hide()
+    ColorPickerFrame:SetParent(UIParent)
     ColorPickerFrame:SetFrameStrata("FULLSCREEN_DIALOG")
-    ColorPickerFrame:Raise()
-    if ColorPickerFrame.NineSlice then
-        ColorPickerFrame.NineSlice:SetFrameStrata("FULLSCREEN_DIALOG")
+    ColorPickerFrame:SetFrameLevel(200)
+    ColorPickerFrame.hasOpacity = false
+    ColorPickerFrame.previousValues = { r = previousR, g = previousG, b = previousB }
+    ColorPickerFrame.func = function()
+        ApplySelectedColor()
+        ClosePicker(false)
     end
+    ColorPickerFrame.cancelFunc = function()
+        ClosePicker(true)
+    end
+    ColorPickerFrame.swatchFunc = function()
+        ApplySelectedColor()
+    end
+    ColorPickerFrame:SetColorRGB(r, g, b)
+    ColorPickerFrame:Show()
+    ColorPickerFrame:Raise()
 end
 
 local function OpenGitHub()

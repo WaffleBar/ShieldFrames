@@ -112,22 +112,32 @@ local function GetOvershieldAmount(unit, curHealth, maxHealth)
     return overshield, totalAbsorb
 end
 
-local function GetUnitFrameOverlay(frame, absorbBar)
-    if absorbBar and not absorbBar:IsForbidden() then
-        if absorbBar.TiledOverlay and not absorbBar.TiledOverlay:IsForbidden() then
-            return absorbBar.TiledOverlay, absorbBar.tiledOverlaySize or absorbBar.tileSize
-        end
-        if absorbBar.overlay and not absorbBar.overlay:IsForbidden() then
-            return absorbBar.overlay, absorbBar.overlay.tileSize or absorbBar.tileSize
-        end
+local function EnsureCustomTextures(frame, healthBar)
+    if not frame.ShieldFramesOverlay then
+        local overlay = healthBar:CreateTexture(nil, "OVERLAY", nil, 7)
+        overlay:SetTexture("Interface\\RaidFrame\\Shield-Overlay", true, true)
+        overlay.tileSize = 32
+        overlay:Hide()
+
+        local glow = healthBar:CreateTexture(nil, "OVERLAY", nil, 8)
+        glow:SetTexture("Interface\\RaidFrame\\Shield-Overshield")
+        glow:SetBlendMode("ADD")
+        glow:SetWidth(16)
+        glow:Hide()
+
+        frame.ShieldFramesOverlay = overlay
+        frame.ShieldFramesGlow = glow
     end
 
-    if frame.totalAbsorbBarOverlay and not frame.totalAbsorbBarOverlay:IsForbidden() then
-        return frame.totalAbsorbBarOverlay, frame.totalAbsorbBarOverlay.tileSize
-    end
+    return frame.ShieldFramesOverlay, frame.ShieldFramesGlow
+end
 
-    if frame.totalAbsorbOverlay and not frame.totalAbsorbOverlay:IsForbidden() then
-        return frame.totalAbsorbOverlay, frame.totalAbsorbOverlay.tileSize
+local function HideCustomTextures(frame)
+    if frame.ShieldFramesOverlay then
+        frame.ShieldFramesOverlay:Hide()
+    end
+    if frame.ShieldFramesGlow then
+        frame.ShieldFramesGlow:Hide()
     end
 end
 
@@ -245,35 +255,20 @@ local function UpdateUnitFrame(frame)
         return
     end
 
-    local absorbBar = frame.totalAbsorbBar
-    local glow = frame.overAbsorbGlow
-    if not glow or glow:IsForbidden() then
-        return
-    end
-
     local totalAbsorb = UnitGetTotalAbsorbs(frame.unit) or 0
     totalAbsorb = SafeNumber(totalAbsorb) or 0
     if totalAbsorb <= 0 then
-        glow:Hide()
+        HideCustomTextures(frame)
         return
     end
 
-    local overshield, totalAbsorbAmount = GetOvershieldAmount(frame.unit, curHealth, maxHealth)
+    local overshield = GetOvershieldAmount(frame.unit, curHealth, maxHealth)
     if overshield <= 0 then
-        glow:Hide()
-        return
-    end
-
-    local healthBarTexture = healthBar:GetStatusBarTexture()
-    local effectiveHealth = curHealth + totalAbsorbAmount
-    local overlay, tileSize = GetUnitFrameOverlay(frame, absorbBar)
-    local fillMask = absorbBar and absorbBar.FillMask
-
-    if absorbBar and not absorbBar:IsForbidden() and absorbBar.UpdateFillPosition and healthBarTexture and not healthBarTexture:IsForbidden() then
-        if effectiveHealth > maxHealth then
-            local xOffset = (maxHealth / effectiveHealth) - 1
-            absorbBar:UpdateFillPosition(healthBarTexture, totalAbsorbAmount, xOffset)
+        HideCustomTextures(frame)
+        if frame.overAbsorbGlow and not frame.overAbsorbGlow:IsForbidden() then
+            -- Leave Blizzard's default absorb display when there is no overshield.
         end
+        return
     end
 
     local barWidth = SafeNumber(healthBar:GetWidth())
@@ -284,21 +279,15 @@ local function UpdateUnitFrame(frame)
     local fillWidth = (curHealth / maxHealth) * barWidth
     local overlayWidth = Clamp((overshield / maxHealth) * barWidth, 0, math.min(fillWidth, barWidth))
     if overlayWidth <= 0 then
+        HideCustomTextures(frame)
         return
     end
 
-    if overlay then
-        ApplyOverlayAndGlow(healthBar, overlay, glow, overlayWidth, tileSize)
-        return
-    end
+    local overlay, glow = EnsureCustomTextures(frame, healthBar)
+    ApplyOverlayAndGlow(healthBar, overlay, glow, overlayWidth, 32)
 
-    if fillMask and not fillMask:IsForbidden() and GetOverlaySettings().showGlow then
-        local color = GetOverlaySettings().glowColor
-        glow:ClearAllPoints()
-        glow:SetPoint("TOPLEFT", fillMask, "TOPLEFT", GLOW_EDGE_OFFSET, 0)
-        glow:SetPoint("BOTTOMLEFT", fillMask, "BOTTOMLEFT", GLOW_EDGE_OFFSET, 0)
-        glow:SetVertexColor(color.r or 1, color.g or 1, color.b or 1, GetOverlaySettings().glowAlpha)
-        glow:Show()
+    if frame.overAbsorbGlow and not frame.overAbsorbGlow:IsForbidden() then
+        frame.overAbsorbGlow:Hide()
     end
 end
 
@@ -424,6 +413,24 @@ EventUtil.ContinueOnAddOnLoaded(addonName, function()
         UpdateUnitFrame(frame)
     end)
 
+    C_Timer.NewTicker(0.15, function()
+        if not IsEnabled() then
+            return
+        end
+        if PlayerFrame and PlayerFrame.unit then
+            UpdateUnitFrame(PlayerFrame)
+        end
+        if TargetFrame and TargetFrame.unit then
+            UpdateUnitFrame(TargetFrame)
+        end
+        if FocusFrame and FocusFrame.unit then
+            UpdateUnitFrame(FocusFrame)
+        end
+        if PetFrame and PetFrame.unit then
+            UpdateUnitFrame(PetFrame)
+        end
+    end)
+
     SLASH_SHIELDFRAMES1 = "/shieldframes"
     SLASH_SHIELDFRAMES2 = "/sf"
     SlashCmdList["SHIELDFRAMES"] = function(msg)
@@ -436,10 +443,11 @@ EventUtil.ContinueOnAddOnLoaded(addonName, function()
             local overshield = GetOvershieldAmount(unit, health, maxHealth)
             print("|cff00ccffShieldFrames|r enabled:", tostring(IsEnabled()))
             print("|cff00ccffShieldFrames|r player absorb:", absorb, "overshield:", overshield or 0, "health:", health, "/", maxHealth)
+            if overshield <= 0 and absorb > 0 then
+                print("|cff00ccffShieldFrames|r absorb is covering missing health only. Test at full HP for overshield.")
+            end
             if PlayerFrame then
-                local overlay, tileSize = GetUnitFrameOverlay(PlayerFrame, PlayerFrame.totalAbsorbBar)
-                print("|cff00ccffShieldFrames|r overlay found:", tostring(overlay ~= nil), "tileSize:", tostring(tileSize))
-                print("|cff00ccffShieldFrames|r absorbBar:", tostring(PlayerFrame.totalAbsorbBar ~= nil), "FillMask:", tostring(PlayerFrame.totalAbsorbBar and PlayerFrame.totalAbsorbBar.FillMask ~= nil))
+                print("|cff00ccffShieldFrames|r custom overlay:", tostring(PlayerFrame.ShieldFramesOverlay ~= nil))
             end
             ns.RefreshAllFrames()
             return
