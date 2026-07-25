@@ -1,0 +1,11 @@
+## Interface: 120007
+## Title: ShieldFrames
+## Notes: Shows overshield absorb as a transparent bar on Blizzard party and raid frames.
+## Author: Burn and Waffle
+## Version: 1.0.0
+## IconTexture: Interface\AddOns\ShieldFrames\Media\AddonIcon.png
+## X-Website: https://github.com/WaffleBar/ShieldFrames
+## SavedVariables: ShieldFramesDB
+
+Core.lua
+Settings.lua

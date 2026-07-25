@@ -1,0 +1,9 @@
+ignore:
+  - .git
+  - .github
+  - .gitignore
+  - .pkgmeta
+  - .previews
+  - README.md
+  - CHANGELOG.md
+  - "*.zip"

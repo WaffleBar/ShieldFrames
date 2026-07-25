@@ -1,0 +1,11 @@
+# Release packages
+*.zip
+
+# OS / editor
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.swp
+*.swo
+.vs/
+.idea/
