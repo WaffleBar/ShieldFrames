@@ -21,4 +21,13 @@ This folder is **not** packaged into the WoW addon zip (see `.pkgmeta`).
 
 Replace these with your own screenshots anytime; commit and tag a new release so WowUp Hub re-indexes the gallery.
 
+Regenerate the **GitHub / WowUp card banner** (1280×640) with:
+
+```powershell
+csc /out:tools/MakeSocialPreview.exe tools/MakeSocialPreview.cs
+tools/MakeSocialPreview.exe .
+```
+
+Then upload `.github/social-preview.png` under GitHub **Settings → Social preview**.
+
 After adding or changing images, commit to `main` and push a new version tag (e.g. `v1.0.0`) so WowUp Hub re-indexes the gallery.

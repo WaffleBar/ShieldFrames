@@ -1,6 +1,9 @@
 # Release packages
 *.zip
 
+# Generated preview tool
+tools/*.exe
+
 # OS / editor
 Thumbs.db
 Desktop.ini
