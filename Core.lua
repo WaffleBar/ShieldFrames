@@ -219,13 +219,18 @@ local function RestoreBlizzOvershieldGlow(frame, glow)
 end
 
 local function ShouldShowOvershieldGlow(overshieldAmount, fill)
-    local hasOvershield = IsPositiveAmount(overshieldAmount)
-    if hasOvershield ~= nil then
-        return hasOvershield
+    if not fill then
+        return false
     end
 
-    local width = fill and SafeNumber(fill:GetWidth())
-    return SafeGreaterThan(width, 0.5) == true
+    local hasOvershield = IsPositiveAmount(overshieldAmount)
+    if hasOvershield == false then
+        -- Known in-bar absorb only; suppress the edge glow.
+        return false
+    end
+
+    -- Positive or secret/unreadable overshield: the clipped overlay bar is already active.
+    return true
 end
 
 local function MidnightFrameHasOvershield(frame, overshieldAmount, totalAbsorb)
@@ -531,7 +536,8 @@ local function ApplyOvershieldBar(frame, healthBar, absorbAmount, maxHealth, ove
 
     if glow and not glow:IsForbidden() and settings.showGlow and ShouldShowOvershieldGlow(overshieldAmount, fill) then
         local color = settings.glowColor
-        glow:SetParent(bar)
+        glow:SetParent(clip)
+        glow:SetFrameLevel(clip:GetFrameLevel() + 2)
         glow:ClearAllPoints()
         glow:SetPoint("TOPLEFT", fill, "TOPLEFT", GLOW_EDGE_OFFSET, 0)
         glow:SetPoint("BOTTOMLEFT", fill, "BOTTOMLEFT", GLOW_EDGE_OFFSET, 0)

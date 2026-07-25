@@ -2,6 +2,12 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.28] — 2026-07-25
+
+### Fixed
+- Edge glow visible again on real overshield when absorb values are secret; only suppress glow when overshield amount is known to be zero
+- Parent custom glow to the clip frame so it draws above the clipped overlay bar
+
 ## [1.0.27] — 2026-07-25
 
 ### Fixed
