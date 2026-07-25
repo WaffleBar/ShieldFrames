@@ -2,6 +2,11 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.27] — 2026-07-25
+
+### Fixed
+- Color picker Cancel no longer errors; Midnight's `GetPreviousValues()` returns a scalar, so cancel restores the RGB captured when the picker opened
+
 ## [1.0.26] — 2026-07-25
 
 ### Fixed

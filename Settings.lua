@@ -91,12 +91,7 @@ local function OpenRGBColorPicker(getComponents, setColor)
                 setColor(ColorPickerFrame:GetColorRGB())
             end,
             cancelFunc = function()
-                local previousValues = ColorPickerFrame:GetPreviousValues()
-                if previousValues and previousValues.r then
-                    RestorePickerColor(setColor, previousValues.r, previousValues.g, previousValues.b)
-                else
-                    RestorePickerColor(setColor, previousR, previousG, previousB)
-                end
+                RestorePickerColor(setColor, previousR, previousG, previousB)
             end,
         })
         return
