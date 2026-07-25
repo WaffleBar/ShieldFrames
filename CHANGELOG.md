@@ -2,6 +2,11 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.7] — 2026-07-25
+
+### Fixed
+- `/sf debug` no longer falls through to settings; added dedicated `/sfdebug` command
+
 ## [1.0.6] — 2026-07-25
 
 ### Fixed

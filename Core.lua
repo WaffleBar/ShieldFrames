@@ -433,28 +433,56 @@ EventUtil.ContinueOnAddOnLoaded(addonName, function()
 
     SLASH_SHIELDFRAMES1 = "/shieldframes"
     SLASH_SHIELDFRAMES2 = "/sf"
-    SlashCmdList["SHIELDFRAMES"] = function(msg)
-        msg = strtrim(string.lower(msg or ""))
-        if msg == "debug" then
-            local unit = "player"
-            local absorb = UnitGetTotalAbsorbs(unit) or 0
-            local health = UnitHealth(unit)
-            local maxHealth = UnitHealthMax(unit)
-            local overshield = GetOvershieldAmount(unit, health, maxHealth)
-            print("|cff00ccffShieldFrames|r enabled:", tostring(IsEnabled()))
-            print("|cff00ccffShieldFrames|r player absorb:", absorb, "overshield:", overshield or 0, "health:", health, "/", maxHealth)
-            if overshield <= 0 and absorb > 0 then
-                print("|cff00ccffShieldFrames|r absorb is covering missing health only. Test at full HP for overshield.")
-            end
-            if PlayerFrame then
-                print("|cff00ccffShieldFrames|r custom overlay:", tostring(PlayerFrame.ShieldFramesOverlay ~= nil))
-            end
-            ns.RefreshAllFrames()
-            return
-        end
+    SLASH_SHIELDFRAMES3 = "/sfdebug"
 
+    local function PrintDebugInfo()
+        local unit = "player"
+        local absorb = UnitGetTotalAbsorbs(unit) or 0
+        local health = UnitHealth(unit)
+        local maxHealth = UnitHealthMax(unit)
+        local overshield = GetOvershieldAmount(unit, health, maxHealth)
+        print("|cff00ccffShieldFrames|r enabled:", tostring(IsEnabled()))
+        print("|cff00ccffShieldFrames|r player absorb:", absorb, "overshield:", overshield or 0, "health:", health, "/", maxHealth)
+        if overshield <= 0 and absorb > 0 then
+            print("|cff00ccffShieldFrames|r absorb is covering missing health only. Test at full HP for overshield.")
+        end
+        if PlayerFrame then
+            print("|cff00ccffShieldFrames|r custom overlay:", tostring(PlayerFrame.ShieldFramesOverlay ~= nil))
+        end
+        ns.RefreshAllFrames()
+    end
+
+    local function OpenSettings()
         if Settings and Settings.OpenToCategory and ns.categoryID then
             Settings.OpenToCategory(ns.categoryID)
         end
+    end
+
+    SlashCmdList["SHIELDFRAMES"] = function(msg)
+        msg = strtrim(msg or "")
+        local command = string.lower(msg:match("^(%S+)") or "")
+
+        if command == "debug" then
+            PrintDebugInfo()
+            return
+        end
+
+        if command == "help" then
+            print("|cff00ccffShieldFrames|r commands:")
+            print("  /sf or /shieldframes - open settings")
+            print("  /sfdebug or /sf debug - print debug info to chat")
+            return
+        end
+
+        if command == "" then
+            OpenSettings()
+            return
+        end
+
+        print("|cff00ccffShieldFrames|r unknown command:", msg, "- type /sf help")
+    end
+
+    SlashCmdList["SHIELDFRAMESDEBUG"] = function()
+        PrintDebugInfo()
     end
 end)
