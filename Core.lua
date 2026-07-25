@@ -2,7 +2,8 @@ local addonName, ns = ...
 
 local GLOW_EDGE_OFFSET = -7
 local OVERLAY_TILE_SIZE = 32
-local STRIPE_PATTERN_ALPHA = 0.85
+local STRIPE_PATTERN_ALPHA = 0.35
+local GLOW_TEXTURE_WIDTH = 20
 local healPredictionCalculator
 
 local function GetAddonMetadata(field)
@@ -288,6 +289,31 @@ local function GetOverlaySettings()
     }
 end
 
+local function GetOverlayTintColor(settings)
+    return settings.glowColor or ns.defaults.glowColor
+end
+
+local BLIZZ_ABSORB_OVERLAY_KEYS = {
+    "totalAbsorbOverlay",
+    "totalAbsorbBarOverlay",
+}
+
+local function SuppressBlizzAbsorbOverlays(frame, healthBar)
+    for _, key in ipairs(BLIZZ_ABSORB_OVERLAY_KEYS) do
+        local blizzOverlay = frame and frame[key]
+        if blizzOverlay and not blizzOverlay:IsForbidden() then
+            blizzOverlay:Hide()
+        end
+
+        if healthBar then
+            blizzOverlay = healthBar[key]
+            if blizzOverlay and not blizzOverlay:IsForbidden() then
+                blizzOverlay:Hide()
+            end
+        end
+    end
+end
+
 local function Clamp(value, minValue, maxValue)
     if value < minValue then
         return minValue
@@ -336,7 +362,7 @@ local function EnsureCustomTextures(frame, healthBar)
         local glow = healthBar:CreateTexture(nil, "OVERLAY", nil, 7)
         glow:SetTexture("Interface\\RaidFrame\\Shield-Overshield")
         glow:SetBlendMode("ADD")
-        glow:SetWidth(16)
+        glow:SetWidth(GLOW_TEXTURE_WIDTH)
         glow:Hide()
 
         frame.ShieldFramesTint = tint
@@ -456,16 +482,19 @@ local function AnchorOverlayToFill(overlay, healthBar, fill, parent)
     overlay:SetPoint("BOTTOMLEFT", fill, "BOTTOMLEFT", 0, 0)
 end
 
-local function ApplyStripePatternOverlay(frame, healthBar, fill, parent)
+local function ApplyStripePatternOverlay(frame, healthBar, fill, parent, settings)
     local overlay = frame and frame.ShieldFramesOverlay
     if not overlay or overlay:IsForbidden() or not fill then
         return
     end
 
+    local tint = GetOverlayTintColor(settings)
+
     overlay:SetTexture("Interface\\RaidFrame\\Shield-Overlay", true, true)
     AnchorOverlayToFill(overlay, healthBar, fill, parent)
     ApplyTiledOverlayTexture(overlay, fill, healthBar, OVERLAY_TILE_SIZE)
-    overlay:SetVertexColor(1, 1, 1, STRIPE_PATTERN_ALPHA)
+    overlay:SetBlendMode("BLEND")
+    overlay:SetVertexColor(tint.r or 1, tint.g or 1, tint.b or 1, STRIPE_PATTERN_ALPHA)
     overlay:Show()
 end
 
@@ -498,7 +527,7 @@ local function ApplyOvershieldBar(frame, healthBar, absorbAmount, maxHealth, ove
     end
 
     local settings = GetOverlaySettings()
-    local overlayColor = settings.overlayColor
+    local tintColor = GetOverlayTintColor(settings)
 
     clip:ClearAllPoints()
     clip:SetPoint("TOPLEFT", healthFill, "TOPLEFT", 0, 0)
@@ -513,9 +542,9 @@ local function ApplyOvershieldBar(frame, healthBar, absorbAmount, maxHealth, ove
     bar:SetReverseFill(true)
     bar:SetValue(absorbAmount)
     bar:SetStatusBarColor(
-        overlayColor.r or 1,
-        overlayColor.g or 1,
-        overlayColor.b or 1,
+        tintColor.r or 1,
+        tintColor.g or 1,
+        tintColor.b or 1,
         settings.overlayAlpha
     )
     bar:SetAlpha(1)
@@ -532,15 +561,16 @@ local function ApplyOvershieldBar(frame, healthBar, absorbAmount, maxHealth, ove
         return false
     end
 
-    ApplyStripePatternOverlay(frame, healthBar, fill, bar)
+    ApplyStripePatternOverlay(frame, healthBar, fill, bar, settings)
 
     if glow and not glow:IsForbidden() and settings.showGlow and ShouldShowOvershieldGlow(overshieldAmount, fill) then
         local color = settings.glowColor
         glow:SetParent(clip)
-        glow:SetFrameLevel(clip:GetFrameLevel() + 2)
+        glow:SetDrawLayer("OVERLAY", 7)
         glow:ClearAllPoints()
         glow:SetPoint("TOPLEFT", fill, "TOPLEFT", GLOW_EDGE_OFFSET, 0)
         glow:SetPoint("BOTTOMLEFT", fill, "BOTTOMLEFT", GLOW_EDGE_OFFSET, 0)
+        glow:SetBlendMode("ADD")
         glow:SetVertexColor(color.r or 1, color.g or 1, color.b or 1, settings.glowAlpha)
         glow:Show()
     elseif glow and not glow:IsForbidden() then
@@ -558,7 +588,7 @@ local function ApplyOverlayAndGlow(frame, healthBar, overlay, glow, overlayWidth
 
     local settings = GetOverlaySettings()
     tileSize = tileSize or overlay.tileSize or OVERLAY_TILE_SIZE
-    local overlayColor = settings.overlayColor
+    local tintColor = GetOverlayTintColor(settings)
     local tint = frame and frame.ShieldFramesTint
 
     if tint and not tint:IsForbidden() then
@@ -574,9 +604,9 @@ local function ApplyOverlayAndGlow(frame, healthBar, overlay, glow, overlayWidth
         end
         tint:SetTexture("Interface\\Buttons\\WHITE8X8")
         tint:SetVertexColor(
-            overlayColor.r or 1,
-            overlayColor.g or 1,
-            overlayColor.b or 1,
+            tintColor.r or 1,
+            tintColor.g or 1,
+            tintColor.b or 1,
             settings.overlayAlpha
         )
         tint:Show()
@@ -596,11 +626,14 @@ local function ApplyOverlayAndGlow(frame, healthBar, overlay, glow, overlayWidth
         overlay:SetTexCoord(0, overlayWidth / tileSize, 0, totalHeight / tileSize)
     end
     overlay:SetTexture("Interface\\RaidFrame\\Shield-Overlay", true, true)
-    overlay:SetVertexColor(1, 1, 1, STRIPE_PATTERN_ALPHA)
+    overlay:SetBlendMode("BLEND")
+    overlay:SetVertexColor(tintColor.r or 1, tintColor.g or 1, tintColor.b or 1, STRIPE_PATTERN_ALPHA)
     overlay:Show()
 
     if glow and not glow:IsForbidden() and settings.showGlow then
         local color = settings.glowColor
+        glow:SetDrawLayer("OVERLAY", 7)
+        glow:SetBlendMode("ADD")
         glow:ClearAllPoints()
         glow:SetPoint("TOPLEFT", overlay, "TOPLEFT", GLOW_EDGE_OFFSET, 0)
         glow:SetPoint("BOTTOMLEFT", overlay, "BOTTOMLEFT", GLOW_EDGE_OFFSET, 0)
@@ -632,8 +665,11 @@ local function UpdateMidnightOvershield(frame, healthBar, unit)
     SetFrameOvershieldActive(frame, true)
     local applied = ApplyOvershieldBar(frame, healthBar, totalAbsorb, maxHealth, overshieldAmount)
 
-    if applied and blizzGlow then
-        HideBlizzOvershieldGlow(frame, blizzGlow)
+    if applied then
+        SuppressBlizzAbsorbOverlays(frame, healthBar)
+        if blizzGlow then
+            HideBlizzOvershieldGlow(frame, blizzGlow)
+        end
     elseif not applied then
         SetFrameOvershieldActive(frame, false)
         HideOvershieldDisplay(frame)
@@ -699,7 +735,7 @@ local function UpdateCompactFrameInternal(frame)
         EnsureCustomTextures(frame, healthBar)
         local tint = frame.ShieldFramesTint
         local settings = GetOverlaySettings()
-        local overlayColor = settings.overlayColor
+        local tintColor = GetOverlayTintColor(settings)
         local tileSize = overlay.tileSize or OVERLAY_TILE_SIZE
         local totalHeight = SafeOverlayHeight(healthBar)
 
@@ -711,9 +747,9 @@ local function UpdateCompactFrameInternal(frame)
             tint:SetWidth(overlayWidth)
             tint:SetTexture("Interface\\Buttons\\WHITE8X8")
             tint:SetVertexColor(
-                overlayColor.r or 1,
-                overlayColor.g or 1,
-                overlayColor.b or 1,
+                tintColor.r or 1,
+                tintColor.g or 1,
+                tintColor.b or 1,
                 settings.overlayAlpha
             )
             tint:Show()
@@ -726,11 +762,14 @@ local function UpdateCompactFrameInternal(frame)
         overlay:SetWidth(overlayWidth)
         overlay:SetTexture("Interface\\RaidFrame\\Shield-Overlay", true, true)
         overlay:SetTexCoord(0, overlayWidth / tileSize, 0, totalHeight / tileSize)
-        overlay:SetVertexColor(1, 1, 1, STRIPE_PATTERN_ALPHA)
+        overlay:SetBlendMode("BLEND")
+        overlay:SetVertexColor(tintColor.r or 1, tintColor.g or 1, tintColor.b or 1, STRIPE_PATTERN_ALPHA)
         overlay:Show()
 
         if glow and not glow:IsForbidden() and settings.showGlow then
             local color = settings.glowColor
+            glow:SetDrawLayer("OVERLAY", 7)
+            glow:SetBlendMode("ADD")
             glow:ClearAllPoints()
             glow:SetPoint("TOPLEFT", overlay, "TOPLEFT", GLOW_EDGE_OFFSET, 0)
             glow:SetPoint("BOTTOMLEFT", overlay, "BOTTOMLEFT", GLOW_EDGE_OFFSET, 0)
@@ -739,11 +778,14 @@ local function UpdateCompactFrameInternal(frame)
         elseif glow and not glow:IsForbidden() then
             glow:Hide()
         end
+        SuppressBlizzAbsorbOverlays(frame, healthBar)
         return
     end
 
     EnsureCustomTextures(frame, healthBar)
-    ApplyOverlayAndGlow(frame, healthBar, overlay, glow, overlayWidth, overlay.tileSize)
+    if ApplyOverlayAndGlow(frame, healthBar, overlay, glow, overlayWidth, overlay.tileSize) then
+        SuppressBlizzAbsorbOverlays(frame, healthBar)
+    end
 end
 
 function ns.UpdateCompactFrame(frame)
@@ -804,10 +846,12 @@ local function UpdateUnitFrame(frame)
     end
 
     local overlay, glow = EnsureCustomTextures(frame, healthBar)
-    ApplyOverlayAndGlow(frame, healthBar, overlay, glow, overlayWidth, 32)
+    if ApplyOverlayAndGlow(frame, healthBar, overlay, glow, overlayWidth, 32) then
+        SuppressBlizzAbsorbOverlays(frame, healthBar)
+    end
 
     if frame.overAbsorbGlow and not frame.overAbsorbGlow:IsForbidden() then
-        frame.overAbsorbGlow:Hide()
+        HideBlizzOvershieldGlow(frame, frame.overAbsorbGlow)
     end
 end
 

@@ -2,6 +2,85 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.43] — 2026-07-25
+
+### Fixed
+- Overshield overlay now tints with your chosen glow color instead of rendering as a dark default stripe texture
+- Suppresses Blizzard's native absorb overlay on player/target frames so it doesn't stack underneath
+- Edge glow renders above the fill with correct draw layering
+
+## [1.0.42] — 2026-07-25
+
+### Fixed
+- Glow color picker Cancel no longer errors; handles modern `GetPreviousValues()` return format
+
+## [1.0.41] — 2026-07-25
+
+### Fixed
+- Settings error after closing the glow color picker (`cbrHandles` missing on About row)
+
+## [1.0.40] — 2026-07-25
+
+### Fixed
+- Glow color picker now opens as a centered modal instead of overlapping the settings list
+
+## [1.0.39] — 2026-07-25
+
+### Changed
+- Glow color picker aligned to the center control column with checkboxes and sliders
+
+## [1.0.38] — 2026-07-25
+
+### Fixed
+- Glow color swatch no longer uses ColorSwatchTemplate white chrome; inset rounded color panel matches preview
+- Dropdown chevron rotation corrected to point down
+
+## [1.0.37] — 2026-07-25
+
+### Changed
+- Glow color picker matches preview layout: inset rounded ColorSwatch on the left and a plain gray chevron on the right (no edge-to-edge fill or square arrow button)
+
+## [1.0.36] — 2026-07-25
+
+### Fixed
+- Glow color picker chevron now uses the retail dropdown arrow texture instead of a missing-font box character
+
+## [1.0.35] — 2026-07-25
+
+### Fixed
+- Glow color picker matches preview structure: dark rounded outer frame, inset color swatch, flat arrow panel, and gray chevron (no nested dropdown button)
+
+## [1.0.34] — 2026-07-25
+
+### Fixed
+- Glow color picker is now one unified control (color panel + divider + arrow panel) instead of a separate swatch and dropdown button with a gap
+
+## [1.0.33] — 2026-07-25
+
+### Changed
+- Glow color picker now uses Blizzard's WowStyle1DropdownTemplate for the same dropdown chrome as retail settings (color panel + divider + chevron)
+
+## [1.0.32] — 2026-07-25
+
+### Changed
+- Glow color control now uses a preview-style dropdown color button (wide swatch + chevron) and correctly displays the saved glow color
+
+## [1.0.31] — 2026-07-25
+
+### Fixed
+- About blurb and glow color picker now use custom Blizzard settings row templates instead of empty button initializers, fixing the full-width red bars
+
+## [1.0.30] — 2026-07-25
+
+### Fixed
+- About description and glow color swatch no longer render as full-width red buttons; settings initializers now attach their custom UI correctly
+
+## [1.0.29] — 2026-07-25
+
+### Changed
+- Settings panel reorganized to match published previews: About blurb, single General section, decimal opacity sliders (Low/High), and inline glow color swatch
+- Removed separate Overshield Display / Appearance sections and the overlay color picker from settings (overlay tint stays at the default white)
+
 ## [1.0.28] — 2026-07-25
 
 ### Fixed
