@@ -2,6 +2,13 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.89] — 2026-07-26
+
+### Fixed
+- Group Blazing Barrier flicker: faded Blizzard glow is no longer treated as “no shield,” which was clearing the custom overlay in a loop
+- Secret absorb in groups no longer trips `clear-no-absorb` without a readable zero / depleted aura
+- Keep last absorb / aura cache while Midnight secrets barrier auras; Mage barriers can estimate size from max health when needed
+
 ## [1.0.88] — 2026-07-26
 
 ### Fixed

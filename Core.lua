@@ -296,11 +296,9 @@ local function FrameShowsOvershieldGlow(frame)
     if not glow or (type(glow.IsForbidden) == "function" and glow:IsForbidden()) then
         return false
     end
-    if not glow:IsShown() then
-        return false
-    end
-    -- Never read GetAlpha(); our SetAlpha(0) taints it into a secret value.
-    return not frame.ShieldFramesBlizzGlowFaded
+    -- Use IsShown only. We may SetAlpha(0) to hide Blizzard's glow under our stripe;
+    -- that must not count as "no overshield" or we clear → restore → flicker.
+    return glow:IsShown()
 end
 
 local function FrameHasBlizzOvershieldGlow(frame)
@@ -555,8 +553,9 @@ local function RefreshKnownAbsorbAuraState(frame, unit)
         return
     end
 
-    -- Failed scan: keep cache in combat (Blood Shield aura lookups often fail under Midnight).
-    if unit == "player" and UnitAffectingCombat(unit) then
+    -- Failed scan: keep cache while absorb is secret or we are in combat.
+    -- Midnight often hides barrier auras (Blazing Barrier, Blood Shield) in groups.
+    if unit == "player" and (UnitAffectingCombat(unit) or UnitHasReadableAbsorb(unit) == nil) then
         return
     end
 
@@ -610,8 +609,8 @@ local function HasRecentAbsorbEvent(frame)
     return (GetTime() - frame.ShieldFramesLastAbsorbEvent) < 12
 end
 
-local function ShouldPersistCombatSecretAbsorb(frame, unit, totalAbsorb, overshieldAmount)
-    if not HasCombatSecretAbsorbSignal(unit, totalAbsorb, overshieldAmount) then
+local function ShouldPersistSecretAbsorb(frame, unit, totalAbsorb, overshieldAmount)
+    if not HasSecretAbsorbValue(totalAbsorb, overshieldAmount) then
         return false
     end
     if KnownAbsorbAuraEvidenceActive(frame, unit) then
@@ -620,8 +619,22 @@ local function ShouldPersistCombatSecretAbsorb(frame, unit, totalAbsorb, overshi
     if frame and frame.ShieldFramesLastAbsorbAmount and frame.ShieldFramesLastAbsorbAmount > 0 then
         return true
     end
-    -- Blood DK: Death Strike fires UNIT_ABSORB_AMOUNT_CHANGED even when aura scans fail.
+    if FrameHasBlizzOvershieldGlow(frame) or FrameHasRawOvershieldGlow(frame) then
+        return true
+    end
+    if FrameShowsCustomOverlay(frame) or (frame and frame.ShieldFramesOvershieldActive) then
+        return true
+    end
+    -- Blood DK / barriers: UNIT_ABSORB_AMOUNT_CHANGED even when aura scans fail.
     return HasRecentAbsorbEvent(frame)
+end
+
+local function ShouldPersistCombatSecretAbsorb(frame, unit, totalAbsorb, overshieldAmount)
+    if not HasCombatSecretAbsorbSignal(unit, totalAbsorb, overshieldAmount) then
+        -- Still persist OOC when secret absorb has supporting evidence (group Blazing Barrier flicker).
+        return ShouldPersistSecretAbsorb(frame, unit, totalAbsorb, overshieldAmount)
+    end
+    return ShouldPersistSecretAbsorb(frame, unit, totalAbsorb, overshieldAmount)
 end
 
 local function FrameShowsAbsorbBar(frame)
@@ -888,10 +901,12 @@ local function HasActiveAbsorbEvidence(frame, unit, totalAbsorb, overshieldAmoun
         if KnownAbsorbAuraEvidenceActive(frame, unit) then
             return true
         end
-        if ShouldPersistCombatSecretAbsorb(frame, unit, totalAbsorb, overshieldAmount) then
+        if ShouldPersistSecretAbsorb(frame, unit, totalAbsorb, overshieldAmount) then
             return true
         end
-        return false
+        -- Secret calculator value with no positive "gone" signal: treat as active.
+        -- Returning false here caused Blazing Barrier to flicker off in groups.
+        return true
     end
 
     return false
@@ -935,16 +950,12 @@ local function HasClearNoAbsorbSignal(frame, unit, totalAbsorb, overshieldAmount
     end
 
     if HasSecretAbsorbValue(totalAbsorb, overshieldAmount) then
-        if ShouldPersistCombatSecretAbsorb(frame, unit, totalAbsorb, overshieldAmount) then
+        if ShouldPersistSecretAbsorb(frame, unit, totalAbsorb, overshieldAmount) then
             return false
         end
-        if FrameHasBlizzOvershieldGlow(frame) then
-            return false
-        end
-        if FrameShowsAbsorbBar(frame) then
-            return false
-        end
-        return true
+        -- Secret absorb without a readable zero: do not clear. Midnight secrets
+        -- barrier amounts in groups even while Blazing Barrier is still up.
+        return false
     end
 
     return not HasActiveAbsorbEvidence(frame, unit, totalAbsorb, overshieldAmount)
@@ -997,7 +1008,8 @@ local function ResolveMidnightRenderValues(frame, unit, totalAbsorb, maxHealth, 
     then
         if KnownAbsorbAuraEvidenceActive(frame, unit)
             or FrameHasBlizzOvershieldGlow(frame)
-            or ShouldPersistCombatSecretAbsorb(frame, unit, totalAbsorb, secretAbsorb or totalAbsorb)
+            or ShouldPersistSecretAbsorb(frame, unit, totalAbsorb, secretAbsorb or totalAbsorb)
+            or frame.ShieldFramesOvershieldActive
         then
             absorbAmount = frame.ShieldFramesLastAbsorbAmount
         end
@@ -1007,6 +1019,24 @@ local function ResolveMidnightRenderValues(frame, unit, totalAbsorb, maxHealth, 
         local estimated = EstimateAbsorbFromOvershieldContext(frame, unit, healthBar, maxHealth)
         if estimated and estimated > 0 then
             absorbAmount = estimated
+        end
+    end
+
+    -- Mage barriers in groups: aura/absorb often secret; estimate from max health when we still have signal.
+    if (absorbAmount == nil or absorbAmount <= 0)
+        and unit == "player"
+        and maxHealth
+        and CanAccessValue(maxHealth)
+        and (
+            KnownAbsorbAuraEvidenceActive(frame, unit)
+            or FrameHasBlizzOvershieldGlow(frame)
+            or (frame and frame.ShieldFramesOvershieldActive)
+            or HasRecentAbsorbEvent(frame)
+        )
+    then
+        local _, classFile = UnitClass(unit)
+        if classFile == "MAGE" then
+            absorbAmount = SafeNumber(maxHealth) * 0.24
         end
     end
 
@@ -1793,7 +1823,13 @@ local function ApplyMidnightOvershieldDisplay(frame, healthBar, renderAbsorb, re
     if (not displayAbsorb or not CanAccessValue(displayAbsorb))
         and frame.ShieldFramesLastAbsorbAmount
         and frame.ShieldFramesLastAbsorbAmount > 0
-        and (inCombat or KnownAbsorbAuraEvidenceActive(frame, unit))
+        and (
+            inCombat
+            or KnownAbsorbAuraEvidenceActive(frame, unit)
+            or FrameHasBlizzOvershieldGlow(frame)
+            or HasRecentAbsorbEvent(frame)
+            or frame.ShieldFramesOvershieldActive
+        )
     then
         displayAbsorb = frame.ShieldFramesLastAbsorbAmount
     end
@@ -2366,8 +2402,11 @@ local function PrintDebugInfo()
             ChatPrint("|cff00ccffShieldFrames|r absorb aura depleted: " .. tostring(KnownAbsorbAuraIsDepleted(unit)))
             local bloodShield = SafeGetAuraBySpellID(unit, 77535)
             ChatPrint("|cff00ccffShieldFrames|r blood shield aura: " .. tostring(not not bloodShield))
+            local blazingBarrier = SafeGetAuraBySpellID(unit, 235313)
+            ChatPrint("|cff00ccffShieldFrames|r blazing barrier aura: " .. tostring(not not blazingBarrier))
             if playerFrame then
                 ChatPrint("|cff00ccffShieldFrames|r recent absorb event: " .. tostring(HasRecentAbsorbEvent(playerFrame)))
+                ChatPrint("|cff00ccffShieldFrames|r blizz glow faded by SF: " .. tostring(not not playerFrame.ShieldFramesBlizzGlowFaded))
             end
             ChatPrint("|cff00ccffShieldFrames|r player frame found: " .. tostring(not not playerFrame))
             if playerHealthBar then
@@ -2595,6 +2634,10 @@ eventFrame:SetScript("OnEvent", function(_, event, unit)
         if event == "PLAYER_REGEN_ENABLED" then
             local stillHasShield = UnitHasKnownAbsorbCandidate("player")
                 or ((GetAbsorbFromKnownAura("player") or 0) > 0)
+                or UnitHasReadableAbsorb("player") == true
+                or (PlayerFrame and PlayerFrame.ShieldFramesLastAbsorbAmount and PlayerFrame.ShieldFramesLastAbsorbAmount > 0)
+                or (PlayerFrame and FrameHasRawOvershieldGlow(PlayerFrame))
+                or (PlayerFrame and FrameShowsCustomOverlay(PlayerFrame))
             if stillHasShield then
                 -- Soft leave: keep the overlay continuous so it doesn't jump when absorb becomes readable.
                 if PlayerFrame then
