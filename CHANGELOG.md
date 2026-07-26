@@ -2,6 +2,12 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.55] — 2026-07-25
+
+### Fixed
+- Overshield overlay no longer persists after absorb fades; removed sticky self-referential detection and stale last-known absorb fallback
+- Clear no-absorb signals (zero readable absorb, no barrier aura, no Blizzard absorb bar/glow) now force-hide the custom overlay
+
 ## [1.0.54] — 2026-07-25
 
 ### Fixed

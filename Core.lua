@@ -484,8 +484,49 @@ local function ShouldShowOvershieldGlow(frame, overshieldAmount, fill)
         return false
     end
 
-    -- Secret overshield amount: keep glow stable while our overlay is active.
-    if frame.ShieldFramesOvershieldActive then
+    -- Secret overshield amount: follow live absorb signals only.
+    local unit = frame.unit or frame.displayedUnit
+    if unit and UnitHasDamageBarrierAura(unit) then
+        return true
+    end
+    if FrameShowsAbsorbBar(frame) then
+        return true
+    end
+
+    return false
+end
+
+local function HasClearNoAbsorbSignal(frame, unit, totalAbsorb, overshieldAmount)
+    if unit and UnitHasDamageBarrierAura(unit) then
+        return false
+    end
+
+    if FrameShowsAbsorbBar(frame) then
+        return false
+    end
+
+    local ok, blizzGlowActive = pcall(FrameShowsOvershieldGlow, frame)
+    if ok and blizzGlowActive then
+        return false
+    end
+
+    if unit then
+        local readableAbsorb = UnitHasReadableAbsorb(unit)
+        if readableAbsorb == true then
+            return false
+        end
+        if readableAbsorb == false then
+            return true
+        end
+    end
+
+    if SafeGreaterThan(totalAbsorb, 0) == true then
+        return false
+    end
+    if SafeGreaterThan(overshieldAmount, 0) == true then
+        return false
+    end
+    if SafeLessOrEqual(totalAbsorb, 0) == true then
         return true
     end
 
@@ -534,7 +575,7 @@ local function MidnightFrameHasAbsorb(frame, overshieldAmount, totalAbsorb, unit
         return true
     end
 
-    return frame.ShieldFramesOvershieldActive or false
+    return false
 end
 
 local function ResolveMidnightRenderValues(frame, unit, totalAbsorb, maxHealth, healthBar)
@@ -560,13 +601,6 @@ local function ResolveMidnightRenderValues(frame, unit, totalAbsorb, maxHealth, 
         if fromBarrier and fromBarrier > 0 then
             absorbAmount = fromBarrier
         end
-    end
-
-    if (absorbAmount == nil or not CanAccessValue(absorbAmount) or absorbAmount <= 0)
-        and frame
-        and frame.ShieldFramesLastAbsorbAmount
-    then
-        absorbAmount = frame.ShieldFramesLastAbsorbAmount
     end
 
     return absorbAmount, maxHealth
@@ -1020,6 +1054,15 @@ local function UpdateMidnightOvershield(frame, healthBar, unit)
     local blizzGlow = frame.overAbsorbGlow
     local totalAbsorb, overshieldAmount, maxHealth = GetCalculatorAbsorbValues(unit)
 
+    if HasClearNoAbsorbSignal(frame, unit, totalAbsorb, overshieldAmount) then
+        SetFrameOvershieldActive(frame, false)
+        frame.ShieldFramesLastAbsorbAmount = nil
+        frame.ShieldFramesPendingAbsorbEstimate = nil
+        HideOvershieldDisplay(frame)
+        frame.ShieldFramesUpdateLock = nil
+        return
+    end
+
     if not MidnightFrameHasAbsorb(frame, overshieldAmount, totalAbsorb, unit) then
         SetFrameOvershieldActive(frame, false)
         frame.ShieldFramesLastAbsorbAmount = nil
@@ -1034,6 +1077,7 @@ local function UpdateMidnightOvershield(frame, healthBar, unit)
         and frame.ShieldFramesOverlayBar
         and not frame.ShieldFramesOverlayBar:IsForbidden()
         and frame.ShieldFramesOverlayBar:IsShown()
+        and not HasClearNoAbsorbSignal(frame, unit, totalAbsorb, overshieldAmount)
 
     if absorbAmount == nil or renderMaxHealth == nil then
         if keepPrevious then
