@@ -2,6 +2,14 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.88] — 2026-07-26
+
+### Fixed
+- Overshield overlay no longer stretch-anchors to NaN/secret fill widths (group combat “screen-wide stripe” + lag)
+- Status-bar path requires finite readable absorb + max (uses last known values); secret `SetValue`/`SetMinMaxValues` removed
+- `SafeNumber` rejects NaN/Inf so bad widths cannot bypass `> 0` clamps
+- Bootstrap no longer poisons cached bar width with the 48px stripe fallback
+
 ## [1.0.87] — 2026-07-26
 
 ### Changed

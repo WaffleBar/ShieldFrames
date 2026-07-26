@@ -94,11 +94,25 @@ local function IsSecret(value)
     return issecretvalue and issecretvalue(value)
 end
 
+-- Reject nil/secret and non-finite numbers (NaN/Inf). NaN fails every comparison
+-- (`nan > 0` is false), so unguarded width math can skip clamps and stretch overlays.
+local function IsFiniteNumber(value)
+    return type(value) == "number" and value == value and value < math.huge and value > -math.huge
+end
+
 local function SafeNumber(value)
     if value == nil or IsSecret(value) then
         return nil
     end
+    if not IsFiniteNumber(value) then
+        return nil
+    end
     return value
+end
+
+local function IsPositiveFinite(value)
+    local n = SafeNumber(value)
+    return n ~= nil and n > 0
 end
 
 local function CanAccessValue(value)
@@ -1201,6 +1215,7 @@ local function ClearFrameOvershieldState(frame)
     frame.ShieldFramesPendingAbsorbEstimate = nil
     frame.ShieldFramesLastOverlayWidth = nil
     frame.ShieldFramesCachedBarWidth = nil
+    frame.ShieldFramesLastMaxHealth = nil
     HideOvershieldDisplay(frame)
     frame.ShieldFramesLastApplyResult = false
 end
@@ -1292,10 +1307,15 @@ local function ApplyOverlayAndGlow(frame, healthBar, overlay, glow, overlayWidth
     end
 
     if fillAnchor then
+        -- Only stretch-anchor when the fill reports a finite positive width.
+        local fillWidth = fillAnchor.GetWidth and SafeNumber(fillAnchor:GetWidth())
+        if not IsPositiveFinite(fillWidth) then
+            return false
+        end
         overlayWidth = nil
     else
         overlayWidth = SafeNumber(overlayWidth)
-        if not overlayWidth or overlayWidth <= 0 then
+        if not IsPositiveFinite(overlayWidth) then
             return false
         end
     end
@@ -1374,25 +1394,30 @@ local function AnchorOverlayToFill(overlay, healthBar, fill, parent)
 end
 
 local function AnchorOverlayToHealthBarWidth(overlay, healthBar, overlayWidth, parent)
+    overlayWidth = SafeNumber(overlayWidth)
+    if not IsPositiveFinite(overlayWidth) then
+        return false
+    end
     overlay:SetParent(parent or healthBar)
     overlay:ClearAllPoints()
     overlay:SetPoint("TOPRIGHT", healthBar, "TOPRIGHT", 0, 0)
     overlay:SetPoint("BOTTOMRIGHT", healthBar, "BOTTOMRIGHT", 0, 0)
     overlay:SetWidth(overlayWidth)
+    return true
 end
 
 local function GetOwnedOverlayBarWidth(frame, healthBar)
     local bar = frame and frame.ShieldFramesOverlayBar
     if bar and not IsFrameForbidden(bar) then
         local width = SafeNumber(bar:GetWidth())
-        if width and width > 0 then
+        if IsPositiveFinite(width) then
             frame.ShieldFramesCachedBarWidth = width
             return width
         end
     end
 
     local cached = frame and SafeNumber(frame.ShieldFramesCachedBarWidth)
-    if cached and cached > 0 then
+    if IsPositiveFinite(cached) then
         return cached
     end
 
@@ -1400,7 +1425,7 @@ local function GetOwnedOverlayBarWidth(frame, healthBar)
     local clip = frame and frame.ShieldFramesOverlayClip
     if clip and not IsFrameForbidden(clip) then
         local width = SafeNumber(clip:GetWidth())
-        if width and width > 0 then
+        if IsPositiveFinite(width) then
             if frame then
                 frame.ShieldFramesCachedBarWidth = width
             end
@@ -1412,19 +1437,26 @@ local function GetOwnedOverlayBarWidth(frame, healthBar)
 end
 
 local function ComputeAbsorbOverlayWidth(frame, healthBar, absorbAmount, maxHealth)
-    if not absorbAmount or not maxHealth then
-        return nil
-    end
-    if not CanAccessValue(absorbAmount) or not CanAccessValue(maxHealth) or maxHealth <= 0 then
+    absorbAmount = SafeNumber(absorbAmount)
+    maxHealth = SafeNumber(maxHealth)
+    if not absorbAmount or not maxHealth or maxHealth <= 0 or absorbAmount <= 0 then
         return nil
     end
 
     local barWidth = GetOwnedOverlayBarWidth(frame, healthBar)
-    if not barWidth or barWidth <= 0 then
+    if not IsPositiveFinite(barWidth) then
         return nil
     end
 
-    return (absorbAmount / maxHealth) * barWidth
+    local width = (absorbAmount / maxHealth) * barWidth
+    if not IsPositiveFinite(width) then
+        return nil
+    end
+    -- Never let a bad ratio exceed the owned bar (stops screen-wide overlays).
+    if width > barWidth then
+        width = barWidth
+    end
+    return width
 end
 
 local function AnchorOvershieldClip(clip, healthBar, healthFill, overshieldAmount, unit, frame)
@@ -1450,7 +1482,7 @@ end
 local function ApplyStripePatternOverlay(frame, healthBar, fill, parent, settings, absorbAmount, maxHealth)
     local overlay = frame and frame.ShieldFramesOverlay
     if not overlay or overlay:IsForbidden() or not fill then
-        return
+        return false
     end
 
     local tint = GetOverlayTintColor(settings)
@@ -1458,28 +1490,48 @@ local function ApplyStripePatternOverlay(frame, healthBar, fill, parent, setting
     if (not sizingAbsorb or not CanAccessValue(sizingAbsorb)) and frame and frame.ShieldFramesLastAbsorbAmount then
         sizingAbsorb = frame.ShieldFramesLastAbsorbAmount
     end
-    local overlayWidth = ComputeAbsorbOverlayWidth(frame, healthBar, sizingAbsorb, maxHealth)
+    local sizingMax = maxHealth
+    if (not sizingMax or not CanAccessValue(sizingMax)) and frame and frame.ShieldFramesLastMaxHealth then
+        sizingMax = frame.ShieldFramesLastMaxHealth
+    end
+    local overlayWidth = ComputeAbsorbOverlayWidth(frame, healthBar, sizingAbsorb, sizingMax)
     local fillWidth = fill and SafeNumber(fill:GetWidth())
 
     overlay:SetTexture("Interface\\RaidFrame\\Shield-Overlay", true, true)
-    if fillWidth and fillWidth > 0 then
+    if IsPositiveFinite(fillWidth) then
         -- Readable fill: lock stripe to the reverse-fill so glow/stripe cannot drift apart.
         AnchorOverlayToFill(overlay, healthBar, fill, parent)
         ApplyTiledOverlayTexture(overlay, fill, healthBar, OVERLAY_TILE_SIZE)
-    elseif overlayWidth and overlayWidth > 0 then
-        -- Combat secret fill width: size from absorb/max so the stripe still tracks.
-        AnchorOverlayToHealthBarWidth(overlay, healthBar, overlayWidth, parent)
+    elseif IsPositiveFinite(overlayWidth) then
+        -- Secret/NaN fill width: size from absorb/max so the stripe still tracks.
+        if not AnchorOverlayToHealthBarWidth(overlay, healthBar, overlayWidth, parent) then
+            overlay:Hide()
+            return false
+        end
         local totalHeight = SafeOverlayHeight(healthBar)
         overlay:SetHorizTile(true)
         overlay:SetVertTile(true)
         overlay:SetTexCoord(0, overlayWidth / OVERLAY_TILE_SIZE, 0, totalHeight / OVERLAY_TILE_SIZE)
     else
-        AnchorOverlayToFill(overlay, healthBar, fill, parent)
-        ApplyTiledOverlayTexture(overlay, fill, healthBar, OVERLAY_TILE_SIZE)
+        -- Never stretch-anchor to an unreadable/NaN fill — that paints a screen-wide stripe and lags.
+        local fallbackWidth = SafeNumber(frame and frame.ShieldFramesLastOverlayWidth)
+        if not IsPositiveFinite(fallbackWidth) then
+            fallbackWidth = 48
+        end
+        if not AnchorOverlayToHealthBarWidth(overlay, healthBar, fallbackWidth, parent) then
+            overlay:Hide()
+            return false
+        end
+        local totalHeight = SafeOverlayHeight(healthBar)
+        overlay:SetHorizTile(true)
+        overlay:SetVertTile(true)
+        overlay:SetTexCoord(0, fallbackWidth / OVERLAY_TILE_SIZE, 0, totalHeight / OVERLAY_TILE_SIZE)
+        frame.ShieldFramesLastOverlayWidth = fallbackWidth
     end
     overlay:SetBlendMode("BLEND")
     overlay:SetVertexColor(tint.r or 1, tint.g or 1, tint.b or 1, settings.overlayAlpha)
     overlay:Show()
+    return true
 end
 
 local function ApplyTiledStatusBarFill(fill, healthBar, tileSize)
@@ -1514,17 +1566,28 @@ local function ApplyOvershieldBar(frame, healthBar, absorbAmount, maxHealth, ove
     local tintColor = GetOverlayTintColor(settings)
     local unit = frame.unit or frame.displayedUnit
 
-    -- Prefer a readable value for SetValue so the bar tracks in combat; secret SetValue stalls visually.
+    -- Prefer a readable value for SetValue so the bar tracks in combat; secret SetValue stalls / NaNs.
     local barAbsorb = absorbAmount
     if not CanAccessValue(barAbsorb) and frame.ShieldFramesLastAbsorbAmount and frame.ShieldFramesLastAbsorbAmount > 0 then
         barAbsorb = frame.ShieldFramesLastAbsorbAmount
     end
     local barMax = maxHealth
     if not CanAccessValue(barMax) then
-        local _, fallbackMax = GetUnitHealthValues(frame, unit)
-        if fallbackMax and CanAccessValue(fallbackMax) then
-            barMax = fallbackMax
+        if frame.ShieldFramesLastMaxHealth and frame.ShieldFramesLastMaxHealth > 0 then
+            barMax = frame.ShieldFramesLastMaxHealth
+        else
+            local _, fallbackMax = GetUnitHealthValues(frame, unit)
+            if fallbackMax and CanAccessValue(fallbackMax) then
+                barMax = fallbackMax
+            end
         end
+    end
+
+    barAbsorb = SafeNumber(barAbsorb)
+    barMax = SafeNumber(barMax)
+    -- Secret SetMinMaxValues/SetValue can produce NaN fill widths that stretch across the screen.
+    if not IsPositiveFinite(barAbsorb) or not IsPositiveFinite(barMax) then
+        return false
     end
 
     AnchorOvershieldClip(clip, healthBar, healthFill, overshieldAmount, unit, frame)
@@ -1533,12 +1596,7 @@ local function ApplyOvershieldBar(frame, healthBar, absorbAmount, maxHealth, ove
     bar:SetPoint("TOPLEFT", healthBar, "TOPLEFT", 0, 0)
     bar:SetPoint("BOTTOMRIGHT", healthBar, "BOTTOMRIGHT", 0, 0)
     bar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
-    if CanAccessValue(barMax) then
-        bar:SetMinMaxValues(0, barMax)
-    else
-        bar:SetMinMaxValues(0, maxHealth)
-        barMax = maxHealth
-    end
+    bar:SetMinMaxValues(0, barMax)
     bar:SetReverseFill(true)
     bar:SetValue(barAbsorb)
     bar:SetStatusBarColor(
@@ -1561,12 +1619,33 @@ local function ApplyOvershieldBar(frame, healthBar, absorbAmount, maxHealth, ove
         return false
     end
 
-    ApplyStripePatternOverlay(frame, healthBar, fill, bar, settings, barAbsorb, barMax)
+    if not ApplyStripePatternOverlay(frame, healthBar, fill, bar, settings, barAbsorb, barMax) then
+        bar:Hide()
+        if glow and not glow:IsForbidden() then
+            glow:Hide()
+        end
+        return false
+    end
 
-    local fillWidth = fill and SafeNumber(fill:GetWidth())
+    local fillWidth = SafeNumber(fill:GetWidth())
+    -- If the engine still handed back a broken fill, abandon the status-bar path.
+    if fillWidth == nil then
+        local rawWidth = fill.GetWidth and fill:GetWidth()
+        if rawWidth ~= nil and not IsSecret(rawWidth) and not IsFiniteNumber(rawWidth) then
+            bar:Hide()
+            if overlay and not overlay:IsForbidden() then
+                overlay:Hide()
+            end
+            if glow and not glow:IsForbidden() then
+                glow:Hide()
+            end
+            return false
+        end
+    end
+
     local overlayWidth = ComputeAbsorbOverlayWidth(frame, healthBar, barAbsorb, barMax)
-    local knownWidth = (overlayWidth and overlayWidth > 0 and overlayWidth)
-        or (fillWidth and fillWidth > 0 and fillWidth)
+    local knownWidth = (IsPositiveFinite(overlayWidth) and overlayWidth)
+        or (IsPositiveFinite(fillWidth) and fillWidth)
     -- Only suppress glow when width is known to be tiny.
     local canShowGlow = not (knownWidth and knownWidth > 0 and knownWidth < 8)
     local stripe = overlay
@@ -1580,15 +1659,17 @@ local function ApplyOvershieldBar(frame, healthBar, absorbAmount, maxHealth, ove
         if stripe and not IsFrameForbidden(stripe) and stripe:IsShown() then
             glow:SetPoint("TOPLEFT", stripe, "TOPLEFT", GLOW_EDGE_OFFSET, 0)
             glow:SetPoint("BOTTOMLEFT", stripe, "BOTTOMLEFT", GLOW_EDGE_OFFSET, 0)
-        elseif fillWidth and fillWidth > 0 then
+        elseif IsPositiveFinite(fillWidth) then
             glow:SetPoint("TOPLEFT", fill, "TOPLEFT", GLOW_EDGE_OFFSET, 0)
             glow:SetPoint("BOTTOMLEFT", fill, "BOTTOMLEFT", GLOW_EDGE_OFFSET, 0)
-        elseif overlayWidth and overlayWidth > 0 then
+        elseif IsPositiveFinite(overlayWidth) then
             glow:SetPoint("TOPLEFT", healthBar, "TOPRIGHT", -overlayWidth + GLOW_EDGE_OFFSET, 0)
             glow:SetPoint("BOTTOMLEFT", healthBar, "BOTTOMRIGHT", -overlayWidth + GLOW_EDGE_OFFSET, 0)
         else
-            glow:SetPoint("TOPLEFT", fill, "TOPLEFT", GLOW_EDGE_OFFSET, 0)
-            glow:SetPoint("BOTTOMLEFT", fill, "BOTTOMLEFT", GLOW_EDGE_OFFSET, 0)
+            glow:Hide()
+            -- Keep the stripe; glow is optional when anchors are unsafe.
+            frame.ShieldFramesLastMaxHealth = barMax
+            return true
         end
         glow:SetBlendMode("ADD")
         glow:SetVertexColor(color.r or 1, color.g or 1, color.b or 1, settings.glowAlpha)
@@ -1597,6 +1678,10 @@ local function ApplyOvershieldBar(frame, healthBar, absorbAmount, maxHealth, ove
         glow:Hide()
     end
 
+    frame.ShieldFramesLastMaxHealth = barMax
+    if IsPositiveFinite(knownWidth) then
+        frame.ShieldFramesLastOverlayWidth = knownWidth
+    end
     return true
 end
 
@@ -1676,7 +1761,7 @@ local function ApplyOvershieldBootstrapOverlay(frame, healthBar, maxHealth, over
         local overlayWidth = ComputeBootstrapOverlayWidth(frame)
         if ApplyOverlayAndGlow(frame, healthBar, overlay, glow, overlayWidth, 32) then
             frame.ShieldFramesLastOverlayWidth = overlayWidth
-            frame.ShieldFramesCachedBarWidth = overlayWidth
+            -- Do not poison CachedBarWidth with the stripe pixel width (was 48).
             return true
         end
     end
@@ -1713,34 +1798,29 @@ local function ApplyMidnightOvershieldDisplay(frame, healthBar, renderAbsorb, re
         displayAbsorb = frame.ShieldFramesLastAbsorbAmount
     end
 
-    if CanRenderAbsorbOnStatusBar(displayAbsorb) or CanRenderAbsorbOnStatusBar(renderAbsorb) then
-        local max = renderMaxHealth
-        if not CanRenderMaxOnStatusBar(max) then
+    local max = renderMaxHealth
+    if not CanAccessValue(max) then
+        if frame.ShieldFramesLastMaxHealth and frame.ShieldFramesLastMaxHealth > 0 then
+            max = frame.ShieldFramesLastMaxHealth
+        else
             local _, fallbackMax = GetUnitHealthValues(frame, unit)
-            if CanRenderMaxOnStatusBar(fallbackMax) then
+            if CanAccessValue(fallbackMax) then
                 max = fallbackMax
             end
         end
-        if CanRenderMaxOnStatusBar(max) then
-            local absorbForBar = CanAccessValue(displayAbsorb) and displayAbsorb or renderAbsorb
-            local absorbReadable = CanAccessValue(absorbForBar)
-            local maxReadable = CanAccessValue(max)
-            -- Out of combat, secret status-bar values create a stuck tiny stripe/glow at the bar tip.
-            local allowSecretBar = inCombat and (absorbReadable or maxReadable or IsSecret(absorbForBar))
-            if (absorbReadable and maxReadable) or allowSecretBar then
-                if absorbReadable and maxReadable then
-                    frame.ShieldFramesLastApplyPath = CanAccessValue(renderAbsorb) and "status-bar" or "status-bar-cached"
-                elseif absorbReadable then
-                    frame.ShieldFramesLastApplyPath = "status-bar-secret-max"
-                elseif maxReadable then
-                    frame.ShieldFramesLastApplyPath = "status-bar-secret-absorb"
-                else
-                    frame.ShieldFramesLastApplyPath = "status-bar-secret"
-                end
-                if ApplyOvershieldBar(frame, healthBar, absorbForBar, max, overshieldAmount) then
-                    return true
-                end
-            end
+    end
+
+    -- Status bar only with finite readable absorb+max. Secret SetValue/SetMinMaxValues
+    -- produced NaN fill widths that stretch-anchored across the screen (group combat).
+    local absorbForBar = CanAccessValue(displayAbsorb) and displayAbsorb
+        or (CanAccessValue(renderAbsorb) and renderAbsorb)
+        or nil
+    absorbForBar = SafeNumber(absorbForBar)
+    max = SafeNumber(max)
+    if IsPositiveFinite(absorbForBar) and IsPositiveFinite(max) then
+        frame.ShieldFramesLastApplyPath = CanAccessValue(renderAbsorb) and "status-bar" or "status-bar-cached"
+        if ApplyOvershieldBar(frame, healthBar, absorbForBar, max, overshieldAmount) then
+            return true
         end
     end
 
@@ -1850,6 +1930,15 @@ local function UpdateMidnightOvershield(frame, healthBar, unit)
             frame.ShieldFramesLastApplyResult = false
             frame.ShieldFramesLastUpdateSkipReason = "readable-max-health-zero"
             return
+        end
+        local readableMax = SafeNumber(renderMaxHealth)
+        if IsPositiveFinite(readableMax) then
+            frame.ShieldFramesLastMaxHealth = readableMax
+        end
+    elseif renderMaxHealth and CanAccessValue(renderMaxHealth) then
+        local readableMax = SafeNumber(renderMaxHealth)
+        if IsPositiveFinite(readableMax) then
+            frame.ShieldFramesLastMaxHealth = readableMax
         end
     end
 
@@ -2393,7 +2482,9 @@ local function PrintDebugInfo()
             if barShown and bar then
                 local fill = bar:GetStatusBarTexture()
                 local width = fill and fill:GetWidth()
-                if SafeNumber(width) and width > 0 then
+                if width ~= nil and not IsSecret(width) and not IsFiniteNumber(width) then
+                    ChatPrint("|cff00ccffShieldFrames|r overlay width: nan (invalid layout — cleared on next safe update)")
+                elseif IsPositiveFinite(width) then
                     ChatPrint("|cff00ccffShieldFrames|r overlay width: " .. tostring(math.floor(width + 0.5)))
                 else
                     ChatPrint("|cff00ccffShieldFrames|r overlay width: secret/unavailable")
