@@ -2,6 +2,12 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.149] — 2026-07-26
+
+### Fixed
+- Secret-boolean taint: stop boolean-testing `UnitIsUnit` / `IsShown` / `GetClipsChildren` results on Midnight party frames
+- Player cast bar icon clipped: only force `SetClipsChildren` on compact party/raid frames, never Player/Target/Focus
+
 ## [1.0.148] — 2026-07-26
 
 ### Fixed

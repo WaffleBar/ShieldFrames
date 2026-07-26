@@ -115,6 +115,31 @@ local function IsPositiveFinite(value)
     return n ~= nil and n > 0
 end
 
+-- Midnight: never `if secretBool` / `and secretBool` — compare explicitly.
+local function SafeBool(value)
+    if value == nil or IsSecret(value) then
+        return false
+    end
+    return value == true
+end
+
+local function SafeUnitIsUnit(unitA, unitB)
+    if unitA == nil or unitB == nil then
+        return false
+    end
+    if unitA == unitB then
+        return true
+    end
+    if type(UnitIsUnit) ~= "function" then
+        return false
+    end
+    local ok, result = pcall(UnitIsUnit, unitA, unitB)
+    if not ok then
+        return false
+    end
+    return SafeBool(result)
+end
+
 local function CanAccessValue(value)
     if value == nil then
         return false
@@ -865,7 +890,21 @@ local function CountLearnedAbsorbSpellIds()
 end
 
 local function IsPlayerUnitToken(unit)
-    return unit and (unit == "player" or UnitIsUnit(unit, "player"))
+    if not unit then
+        return false
+    end
+    return unit == "player" or SafeUnitIsUnit(unit, "player")
+end
+
+local function IsCompactUnitFrame(frame)
+    if type(frame) ~= "table" then
+        return false
+    end
+    if frame.optionTable ~= nil or frame.displayedUnit ~= nil then
+        return true
+    end
+    local name = frame.GetName and frame:GetName()
+    return type(name) == "string" and name:find("Compact", 1, true) ~= nil
 end
 
 local function RefreshKnownAbsorbAuraState(frame, unit)
@@ -1662,6 +1701,7 @@ end
 local function SetFrameClipOverflow(frame, healthBar, enabled)
     -- Never clip the health StatusBar (blanks the fill). Clipping the compact unit
     -- frame itself is safe and stops Blizzard Shield-Fill painting past the border.
+    -- Do NOT clip Player/Target/Focus: cast bars and icons hang outside those frames.
     if healthBar and healthBar.SetClipsChildren then
         healthBar:SetClipsChildren(false)
     end
@@ -1670,11 +1710,18 @@ local function SetFrameClipOverflow(frame, healthBar, enabled)
         return
     end
 
+    if enabled and not IsCompactUnitFrame(frame) then
+        enabled = false
+    end
+
     if enabled then
         if frame.ShieldFramesFrameClipsSaved == nil then
             local wasClipping = false
             if frame.GetClipsChildren then
-                wasClipping = frame:GetClipsChildren() and true or false
+                local ok, clips = pcall(frame.GetClipsChildren, frame)
+                if ok and not IsSecret(clips) then
+                    wasClipping = clips == true
+                end
             end
             frame.ShieldFramesFrameClipsSaved = wasClipping
         end
@@ -1833,7 +1880,10 @@ local function RegionIsShown(region)
         return true
     end
     local ok, shown = pcall(region.IsShown, region)
-    return ok and shown
+    if not ok or IsSecret(shown) then
+        return false
+    end
+    return shown == true
 end
 
 -- True left edge of the FULL absorb hatch (Barrier + PW:S, etc.).
@@ -3473,7 +3523,8 @@ local function RefreshUnitFrameByUnit(unit)
     end
 
     ForEachCompactFrame(function(memberFrame)
-        if memberFrame.displayedUnit == unit then
+        local u = memberFrame.displayedUnit or memberFrame.unit
+        if u == unit or SafeUnitIsUnit(u, unit) then
             SafeUpdateCompactFrame(memberFrame)
         end
     end)
@@ -3909,7 +3960,7 @@ eventFrame:SetScript("OnEvent", function(_, event, unit)
         end
         ForEachCompactFrame(function(memberFrame)
             local u = memberFrame.displayedUnit or memberFrame.unit
-            if u and UnitIsUnit(u, unit) then
+            if u and SafeUnitIsUnit(u, unit) then
                 TouchFrame(memberFrame)
             end
         end)
