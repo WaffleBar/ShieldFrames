@@ -18,28 +18,31 @@ local function RefreshFramesDeferred()
     C_Timer.After(0, RefreshFrames)
 end
 
-local function MakeSetting(category, key, name, defaultValue)
-    local variable = addonName .. "_" .. key
-    local setting = Settings.RegisterAddOnSetting(
-        category,
-        variable,
-        key,
-        ShieldFramesDB,
-        type(defaultValue),
-        name,
-        defaultValue
-    )
-    setting:SetValueChangedCallback(RefreshFrames)
-    return setting
-end
-
 local function CreateCheckbox(category, key, label, tooltip)
-    local setting = MakeSetting(category, key, label, ns.defaults[key])
-    return Settings.CreateCheckbox(category, setting, tooltip)
+    local setting = Settings.RegisterProxySetting(
+        category,
+        addonName .. "_" .. key,
+        Settings.VarType.Boolean,
+        label,
+        ns.defaults[key],
+        function()
+            if DB()[key] == nil then
+                return ns.defaults[key]
+            end
+            return DB()[key]
+        end,
+        function(value)
+            DB()[key] = value
+        end
+    )
+
+    local init = Settings.CreateCheckbox(category, setting, tooltip)
+    setting:SetValueChangedCallback(RefreshFramesDeferred)
+    return init
 end
 
 local function FormatOpacityValue(value)
-    return string.format("%.2f", value)
+    return string.format("%.2f", value / 100)
 end
 
 local function CreateOpacitySlider(category, key, label, tooltip)
@@ -48,16 +51,16 @@ local function CreateOpacitySlider(category, key, label, tooltip)
         addonName .. "_" .. key,
         Settings.VarType.Number,
         label,
-        ns.defaults[key] / 100,
+        ns.defaults[key],
         function()
-            return (DB()[key] or ns.defaults[key]) / 100
+            return DB()[key] or ns.defaults[key]
         end,
         function(value)
-            DB()[key] = math.floor(value * 100 + 0.5)
+            DB()[key] = math.floor(value + 0.5)
         end
     )
 
-    local options = Settings.CreateSliderOptions(0.05, 1.0, 0.05)
+    local options = Settings.CreateSliderOptions(5, 100, 5)
     if options.SetMinLabel then
         options:SetMinLabel("Low")
     end
@@ -67,7 +70,7 @@ local function CreateOpacitySlider(category, key, label, tooltip)
     options:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, FormatOpacityValue)
 
     local init = Settings.CreateSlider(category, setting, options, tooltip)
-    setting:SetValueChangedCallback(RefreshFrames)
+    setting:SetValueChangedCallback(RefreshFramesDeferred)
     return init
 end
 
@@ -552,7 +555,9 @@ local function InitializeSettings()
 end
 
 EventUtil.ContinueOnPlayerLogin(function()
-    if ns.MergeDefaults then
+    if ns.MigrateSavedSettings then
+        ns.MigrateSavedSettings()
+    elseif ns.MergeDefaults then
         ns.MergeDefaults()
     end
     InitializeSettings()

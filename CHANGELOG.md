@@ -2,6 +2,54 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.54] — 2026-07-25
+
+### Fixed
+- `/sfdebug` no longer hangs or fails silently: removed frame refresh from debug, added nil-safe player frame checks, and prints an immediate ack line
+- Blazing Barrier and other mage barriers detected via aura when `UnitGetTotalAbsorbs` reads zero under Midnight secret values
+- Absorb fallback chain no longer stops early on readable zero; Blizzard absorb bar width is sampled before suppression
+- Re-entrant midnight frame updates are guarded to prevent hook recursion
+
+## [1.0.53] — 2026-07-25
+
+### Fixed
+- Midnight absorb detection now treats any active absorb as display-worthy, not only the overshield segment beyond missing health
+- Falls back to Blizzard's absorb bar width and last known amount when API values are secret
+
+## [1.0.52] — 2026-07-25
+
+### Fixed
+- Full-health absorbs like Blazing Barrier render again when the calculator reports zero overshield segment but positive total absorb
+- Midnight overlay no longer aborts when calculator max health is unavailable; falls back to unit frame health values
+
+## [1.0.51] — 2026-07-25
+
+### Fixed
+- Blazing Barrier and other full-health absorbs show the overshield overlay again; detection no longer relies on Blizzard glow fallback
+
+## [1.0.50] — 2026-07-25
+
+### Fixed
+- Edge glow no longer persists at full health after overshield fades; releasing Blizzard glow suppression now hides the texture instead of restoring it visible
+
+## [1.0.49] — 2026-07-25
+
+### Fixed
+- Lua forward-reference crash in `MidnightFrameHasOvershield` (`/sfdebug` and overshield updates)
+
+## [1.0.48] — 2026-07-25
+
+### Fixed
+- Settings sliders and glow color now use the same proxy save path as other Waffle addons, with live frame refresh
+- Opacity values stored as decimals (0.50) are migrated correctly instead of rendering near-invisible
+- Blizzard's default absorb bar is hidden while the ShieldFrames overlay is active so custom color/opacity is visible
+
+## [1.0.47] — 2026-07-25
+
+### Fixed
+- Overlay Opacity and Glow Opacity sliders now save correctly and refresh the live shield display
+- Shield stripe texture alpha follows Overlay Opacity instead of using a fixed value
+
 ## [1.0.46] — 2026-07-25
 
 ### Fixed
