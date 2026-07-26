@@ -2,6 +2,11 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.154] — 2026-07-26
+
+### Fixed
+- Combat Blood DK: secret `readable absorb: nil` no longer aborts the owned hatch+glow path when Blizzard `overAbsorbGlow` / last absorb still show a shield (was falling through to `texture-clip` with no SoftEdgeGlow)
+
 ## [1.0.153] — 2026-07-26
 
 ### Fixed

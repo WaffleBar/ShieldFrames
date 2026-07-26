@@ -2184,15 +2184,35 @@ local function ApplyOwnedOvershieldVisual(frame, healthBar, unit)
     local hasLiveBlizz = IsPositiveFinite(liveWidth) and liveWidth > 1
     local hasCachedBlizz = IsPositiveFinite(blizzWidth) and blizzWidth > 1
     local hasPositiveAbsorb = IsPositiveFinite(absorb) and absorb > 0
+    local glowLive = FrameHasBlizzOvershieldGlow(frame) or FrameHasRawOvershieldGlow(frame)
+
+    -- Combat Blood DK: aura scan often misses while Blizzard tip glow + last absorb
+    -- still prove a shield. Prefer last readable amount so we don't early-out.
+    if not hasPositiveAbsorb and frame.ShieldFramesLastAbsorbAmount then
+        local lastAbsorb = SafeNumber(frame.ShieldFramesLastAbsorbAmount)
+        if IsPositiveFinite(lastAbsorb)
+            and lastAbsorb > 0
+            and (
+                glowLive
+                or HasRecentAbsorbEvent(frame)
+                or (unit and UnitAffectingCombat(unit))
+            )
+        then
+            absorb = lastAbsorb
+            hasPositiveAbsorb = true
+        end
+    end
 
     -- Shields gone: never keep drawing from SoftHide cache alone once auras/absorb are empty.
     -- Rewriting cache from displayWidth used to make priest self-shields stick forever.
-    if auraDepleted and not hasLiveBlizz and not hasPositiveAbsorb then
+    if auraDepleted and not hasLiveBlizz and not hasPositiveAbsorb and not glowLive then
         frame.ShieldFramesBlizzAbsorbWidth = nil
         frame.ShieldFramesLastOverlayWidth = nil
         return false
     end
-    if unit and not hasKnownAura and not hasPositiveAbsorb and not hasLiveBlizz then
+    -- Player readableAbsorb is often nil (secret) during Midnight combat. Do not treat
+    -- that as "no shield" while Blizzard overAbsorbGlow / last absorb still say otherwise.
+    if unit and not hasKnownAura and not hasPositiveAbsorb and not hasLiveBlizz and not glowLive then
         if readableAbsorb == false or (IsPlayerUnitToken(unit) and readableAbsorb ~= true) then
             frame.ShieldFramesBlizzAbsorbWidth = nil
             frame.ShieldFramesLastOverlayWidth = nil
@@ -2850,6 +2870,14 @@ end
 
 local function ApplyOvershieldBar(frame, healthBar, absorbAmount, maxHealth, overshieldAmount)
     local unit = frame.displayedUnit or frame.unit
+    -- Prefer owned SoftEdgeGlow hatch. Seed last absorb so ApplyOwned can size when
+    -- Midnight hid aura points but ResolveMidnight still found a render amount.
+    if IsPositiveFinite(SafeNumber(absorbAmount)) then
+        frame.ShieldFramesLastAbsorbAmount = SafeNumber(absorbAmount)
+    end
+    if IsPositiveFinite(SafeNumber(maxHealth)) then
+        frame.ShieldFramesLastMaxHealth = SafeNumber(maxHealth)
+    end
     if ApplyOwnedOvershieldVisual(frame, healthBar, unit) then
         return true
     end
