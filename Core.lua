@@ -449,6 +449,8 @@ local SEED_ABSORB_SPELL_IDS = {
     [235450] = true, -- Prismatic Barrier
     [11426] = true,  -- Ice Barrier
     [77535] = true,  -- Blood Shield (Blood DK)
+    [193320] = true, -- Umbilicus Eternus absorb (after Vampiric Blood)
+    [391527] = true, -- Umbilicus Eternus absorb (current)
     [48707] = true,  -- Anti-Magic Shell
     [17] = true,     -- Power Word: Shield
     [1253593] = true, -- Void Shield
@@ -3728,7 +3730,9 @@ local function PrintDebugInfo()
             ChatPrint("|cff00ccffShieldFrames|r learned absorb spells: " .. tostring(CountLearnedAbsorbSpellIds()))
             ChatPrint("|cff00ccffShieldFrames|r absorb aura depleted: " .. tostring(KnownAbsorbAuraIsDepleted(unit)))
             local bloodShield = SafeGetAuraBySpellID(unit, 77535)
+            local umbilicus = SafeGetAuraBySpellID(unit, 391527) or SafeGetAuraBySpellID(unit, 193320)
             ChatPrint("|cff00ccffShieldFrames|r blood shield aura: " .. tostring(not not bloodShield))
+            ChatPrint("|cff00ccffShieldFrames|r umbilicus eternus aura: " .. tostring(not not umbilicus))
             local blazingBarrier = SafeGetAuraBySpellID(unit, 235313)
             ChatPrint("|cff00ccffShieldFrames|r blazing barrier aura: " .. tostring(not not blazingBarrier))
             if playerFrame then

@@ -2,6 +2,11 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.152] — 2026-07-26
+
+### Fixed
+- Blood DK Umbilicus Eternus absorb (after Vampiric Blood) was missing from the seed list — track spell IDs 391527 / 193320 so `/sfdebug` and owned hatch sizing can see it
+
 ## [1.0.151] — 2026-07-26
 
 ### Fixed
