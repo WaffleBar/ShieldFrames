@@ -2,6 +2,16 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.46] — 2026-07-25
+
+### Fixed
+- Overshield overlay no longer flashes during shields like Blazing Barrier when absorb values alternate between readable and secret
+
+## [1.0.45] — 2026-07-25
+
+### Fixed
+- Edge glow no longer lingers at full health when there is no overshield; removed sticky overshield state and added readable health/absorb fallback
+
 ## [1.0.44] — 2026-07-25
 
 ### Changed

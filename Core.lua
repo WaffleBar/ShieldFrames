@@ -219,25 +219,43 @@ local function RestoreBlizzOvershieldGlow(frame, glow)
     glow:SetAlpha(1)
 end
 
-local function ShouldShowOvershieldGlow(overshieldAmount, fill)
+local function ShouldShowOvershieldGlow(frame, overshieldAmount, fill)
     if not fill then
         return false
     end
 
     local hasOvershield = IsPositiveAmount(overshieldAmount)
+    if hasOvershield == true then
+        return true
+    end
     if hasOvershield == false then
-        -- Known in-bar absorb only; suppress the edge glow.
         return false
     end
 
-    -- Positive or secret/unreadable overshield: the clipped overlay bar is already active.
-    return true
+    -- Secret overshield amount: keep glow stable while our overlay is active.
+    if frame.ShieldFramesOvershieldActive then
+        return true
+    end
+
+    local ok, blizzGlowActive = pcall(FrameShowsOvershieldGlow, frame)
+    return ok and blizzGlowActive
 end
 
-local function MidnightFrameHasOvershield(frame, overshieldAmount, totalAbsorb)
+local function MidnightFrameHasOvershield(frame, overshieldAmount, totalAbsorb, unit)
+    if unit and HasReadableNoOvershield(unit, frame) then
+        return false
+    end
+
     local hasOvershield = IsPositiveAmount(overshieldAmount)
-    if hasOvershield ~= nil then
-        return hasOvershield
+    if hasOvershield == true then
+        return true
+    end
+    if hasOvershield == false then
+        return false
+    end
+
+    if SafeLessOrEqual(totalAbsorb, 0) == true then
+        return false
     end
 
     local ok, blizzGlowActive = pcall(FrameShowsOvershieldGlow, frame)
@@ -246,10 +264,6 @@ local function MidnightFrameHasOvershield(frame, overshieldAmount, totalAbsorb)
     end
 
     if frame.ShieldFramesOvershieldActive then
-        local noAbsorb = SafeLessOrEqual(totalAbsorb, 0)
-        if noAbsorb == true then
-            return false
-        end
         return true
     end
 
@@ -346,6 +360,30 @@ local function GetOvershieldAmount(unit, curHealth, maxHealth)
     end
 
     return overshield, totalAbsorb
+end
+
+local function HasReadableNoOvershield(unit, frame)
+    local curHealth, maxHealth = GetUnitHealthValues(frame, unit)
+    if not curHealth or not maxHealth or maxHealth <= 0 then
+        return false
+    end
+
+    local rawAbsorb = UnitGetTotalAbsorbs(unit)
+    if rawAbsorb == nil or not CanAccessValue(rawAbsorb) then
+        return false
+    end
+
+    local totalAbsorb = SafeNumber(rawAbsorb) or 0
+    if totalAbsorb <= 0 then
+        return true
+    end
+
+    local missingHealth = maxHealth - curHealth
+    if missingHealth < 0 then
+        missingHealth = 0
+    end
+
+    return (totalAbsorb - missingHealth) <= 0
 end
 
 local function EnsureCustomTextures(frame, healthBar)
@@ -563,7 +601,7 @@ local function ApplyOvershieldBar(frame, healthBar, absorbAmount, maxHealth, ove
 
     ApplyStripePatternOverlay(frame, healthBar, fill, bar, settings)
 
-    if glow and not glow:IsForbidden() and settings.showGlow and ShouldShowOvershieldGlow(overshieldAmount, fill) then
+    if glow and not glow:IsForbidden() and settings.showGlow and ShouldShowOvershieldGlow(frame, overshieldAmount, fill) then
         local color = settings.glowColor
         glow:SetParent(clip)
         glow:SetDrawLayer("OVERLAY", 7)
@@ -650,13 +688,13 @@ local function UpdateMidnightOvershield(frame, healthBar, unit)
     local blizzGlow = frame.overAbsorbGlow
     local totalAbsorb, overshieldAmount, maxHealth = GetCalculatorAbsorbValues(unit)
 
-    if not MidnightFrameHasOvershield(frame, overshieldAmount, totalAbsorb) then
+    if not MidnightFrameHasOvershield(frame, overshieldAmount, totalAbsorb, unit) then
         SetFrameOvershieldActive(frame, false)
         HideOvershieldDisplay(frame)
         return
     end
 
-    if not totalAbsorb or not maxHealth then
+    if not maxHealth or SafeLessOrEqual(totalAbsorb, 0) == true then
         SetFrameOvershieldActive(frame, false)
         HideOvershieldDisplay(frame)
         return
