@@ -2,6 +2,13 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.56] — 2026-07-25
+
+### Fixed
+- Blood Shield and other non-mage absorb auras (Power Word: Shield, Shield of Vengeance, etc.) are detected for midnight overlay rendering
+- Overshield stripe overlay no longer gets clipped away when it extends left into missing-health space
+- Stripe and glow render from computed absorb width when status bar fill width is secret/unreadable
+
 ## [1.0.55] — 2026-07-25
 
 ### Fixed

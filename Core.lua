@@ -316,19 +316,29 @@ local function UnitHasReadableAbsorb(unit)
     return (SafeNumber(rawAbsorb) or 0) > 0
 end
 
-local BARRIER_SPELL_IDS = {
+local ABSORB_AURA_SPELL_IDS = {
     [235313] = true, -- Blazing Barrier
     [235450] = true, -- Prismatic Barrier
     [11426] = true,  -- Ice Barrier
+    [77535] = true,  -- Blood Shield (Blood DK)
+    [17] = true,     -- Power Word: Shield
+    [184662] = true, -- Shield of Vengeance
+    [271466] = true, -- Luminous Barrier
 }
 
-local function GetBarrierAuraData(unit)
+local MAGE_BARRIER_SPELL_IDS = {
+    [235313] = true,
+    [235450] = true,
+    [11426] = true,
+}
+
+local function GetKnownAbsorbAuraData(unit)
     if not unit or not C_UnitAuras then
         return nil
     end
 
     if unit == "player" and C_UnitAuras.GetPlayerAuraBySpellID then
-        for spellId in pairs(BARRIER_SPELL_IDS) do
+        for spellId in pairs(ABSORB_AURA_SPELL_IDS) do
             local aura = C_UnitAuras.GetPlayerAuraBySpellID(spellId)
             if aura then
                 return aura, spellId
@@ -342,7 +352,7 @@ local function GetBarrierAuraData(unit)
             if not aura then
                 break
             end
-            if aura.spellId and BARRIER_SPELL_IDS[aura.spellId] then
+            if aura.spellId and ABSORB_AURA_SPELL_IDS[aura.spellId] then
                 return aura, aura.spellId
             end
         end
@@ -351,12 +361,16 @@ local function GetBarrierAuraData(unit)
     return nil
 end
 
-local function UnitHasDamageBarrierAura(unit)
-    return GetBarrierAuraData(unit) ~= nil
+local function UnitHasKnownAbsorbAura(unit)
+    return GetKnownAbsorbAuraData(unit) ~= nil
 end
 
-local function GetAbsorbFromBarrierAura(unit)
-    local aura = GetBarrierAuraData(unit)
+local function UnitHasDamageBarrierAura(unit)
+    return UnitHasKnownAbsorbAura(unit)
+end
+
+local function GetAbsorbFromKnownAura(unit)
+    local aura = GetKnownAbsorbAuraData(unit)
     if not aura or not aura.points then
         return nil
     end
@@ -371,6 +385,10 @@ local function GetAbsorbFromBarrierAura(unit)
     end
 
     return nil
+end
+
+local function GetAbsorbFromBarrierAura(unit)
+    return GetAbsorbFromKnownAura(unit)
 end
 
 local function FrameShowsAbsorbBar(frame)
@@ -433,12 +451,13 @@ local function EstimateAbsorbFromBarWidth(frame, healthBar, maxHealth)
     return (absorbWidth / healthWidth) * maxHealth
 end
 
-local function GetBarrierAbsorbAmount(unit, frame, healthBar, maxHealth)
-    if not UnitHasDamageBarrierAura(unit) then
+local function GetKnownAbsorbAmount(unit, frame, healthBar, maxHealth)
+    if not UnitHasKnownAbsorbAura(unit) then
         return nil
     end
 
-    local fromAura = GetAbsorbFromBarrierAura(unit)
+    local _, spellId = GetKnownAbsorbAuraData(unit)
+    local fromAura = GetAbsorbFromKnownAura(unit)
     if fromAura and fromAura > 0 then
         return fromAura
     end
@@ -454,11 +473,15 @@ local function GetBarrierAbsorbAmount(unit, frame, healthBar, maxHealth)
         return frame.ShieldFramesPendingAbsorbEstimate
     end
 
-    if maxHealth and CanAccessValue(maxHealth) then
+    if spellId and MAGE_BARRIER_SPELL_IDS[spellId] and maxHealth and CanAccessValue(maxHealth) then
         return maxHealth * 0.24
     end
 
     return nil
+end
+
+local function GetBarrierAbsorbAmount(unit, frame, healthBar, maxHealth)
+    return GetKnownAbsorbAmount(unit, frame, healthBar, maxHealth)
 end
 
 local function ShouldShowOvershieldGlow(frame, overshieldAmount, fill)
@@ -472,7 +495,7 @@ local function ShouldShowOvershieldGlow(frame, overshieldAmount, fill)
     end
     if hasOvershield == false then
         local unit = frame.unit or frame.displayedUnit
-        if unit and UnitHasDamageBarrierAura(unit) then
+        if unit and UnitHasKnownAbsorbAura(unit) then
             return true
         end
         if unit and UnitHasReadableAbsorb(unit) == true then
@@ -486,7 +509,7 @@ local function ShouldShowOvershieldGlow(frame, overshieldAmount, fill)
 
     -- Secret overshield amount: follow live absorb signals only.
     local unit = frame.unit or frame.displayedUnit
-    if unit and UnitHasDamageBarrierAura(unit) then
+    if unit and UnitHasKnownAbsorbAura(unit) then
         return true
     end
     if FrameShowsAbsorbBar(frame) then
@@ -497,7 +520,7 @@ local function ShouldShowOvershieldGlow(frame, overshieldAmount, fill)
 end
 
 local function HasClearNoAbsorbSignal(frame, unit, totalAbsorb, overshieldAmount)
-    if unit and UnitHasDamageBarrierAura(unit) then
+    if unit and UnitHasKnownAbsorbAura(unit) then
         return false
     end
 
@@ -545,7 +568,7 @@ local function HasReadableNoOvershield(unit, frame)
 end
 
 local function MidnightFrameHasAbsorb(frame, overshieldAmount, totalAbsorb, unit)
-    if unit and UnitHasDamageBarrierAura(unit) then
+    if unit and UnitHasKnownAbsorbAura(unit) then
         return true
     end
 
@@ -597,9 +620,9 @@ local function ResolveMidnightRenderValues(frame, unit, totalAbsorb, maxHealth, 
     end
 
     if (absorbAmount == nil or absorbAmount <= 0) and unit then
-        local fromBarrier = GetBarrierAbsorbAmount(unit, frame, healthBar, maxHealth)
-        if fromBarrier and fromBarrier > 0 then
-            absorbAmount = fromBarrier
+        local fromKnownAura = GetKnownAbsorbAmount(unit, frame, healthBar, maxHealth)
+        if fromKnownAura and fromKnownAura > 0 then
+            absorbAmount = fromKnownAura
         end
     end
 
@@ -870,17 +893,73 @@ local function AnchorOverlayToFill(overlay, healthBar, fill, parent)
     overlay:SetPoint("BOTTOMLEFT", fill, "BOTTOMLEFT", 0, 0)
 end
 
-local function ApplyStripePatternOverlay(frame, healthBar, fill, parent, settings)
+local function AnchorOverlayToHealthBarWidth(overlay, healthBar, overlayWidth, parent)
+    overlay:SetParent(parent or healthBar)
+    overlay:ClearAllPoints()
+    overlay:SetPoint("TOPRIGHT", healthBar, "TOPRIGHT", 0, 0)
+    overlay:SetPoint("BOTTOMRIGHT", healthBar, "BOTTOMRIGHT", 0, 0)
+    overlay:SetWidth(overlayWidth)
+end
+
+local function ComputeAbsorbOverlayWidth(healthBar, absorbAmount, maxHealth)
+    if not healthBar or not absorbAmount or not maxHealth then
+        return nil
+    end
+    if not CanAccessValue(absorbAmount) or not CanAccessValue(maxHealth) or maxHealth <= 0 then
+        return nil
+    end
+
+    local barWidth = SafeNumber(healthBar:GetWidth())
+    if not barWidth or barWidth <= 0 then
+        return nil
+    end
+
+    return (absorbAmount / maxHealth) * barWidth
+end
+
+local function AnchorOvershieldClip(clip, healthBar, healthFill, overshieldAmount, unit, frame)
+    clip:ClearAllPoints()
+
+    local useExpandedClip = IsPositiveAmount(overshieldAmount)
+    if useExpandedClip == nil then
+        useExpandedClip = true
+    elseif useExpandedClip == false and unit and frame then
+        useExpandedClip = UnitHasReadableOvershield(unit, frame) == true
+    end
+
+    if useExpandedClip then
+        clip:SetPoint("TOPLEFT", healthBar, "TOPLEFT", 0, 0)
+        clip:SetPoint("BOTTOMRIGHT", healthFill, "BOTTOMRIGHT", 0, 0)
+    else
+        clip:SetPoint("TOPLEFT", healthFill, "TOPLEFT", 0, 0)
+        clip:SetPoint("BOTTOMRIGHT", healthFill, "BOTTOMRIGHT", 0, 0)
+    end
+    clip:Show()
+end
+
+local function ApplyStripePatternOverlay(frame, healthBar, fill, parent, settings, absorbAmount, maxHealth)
     local overlay = frame and frame.ShieldFramesOverlay
     if not overlay or overlay:IsForbidden() or not fill then
         return
     end
 
     local tint = GetOverlayTintColor(settings)
+    local fillWidth = fill and SafeNumber(fill:GetWidth())
+    local overlayWidth = ComputeAbsorbOverlayWidth(healthBar, absorbAmount, maxHealth)
 
     overlay:SetTexture("Interface\\RaidFrame\\Shield-Overlay", true, true)
-    AnchorOverlayToFill(overlay, healthBar, fill, parent)
-    ApplyTiledOverlayTexture(overlay, fill, healthBar, OVERLAY_TILE_SIZE)
+    if fillWidth and fillWidth > 0 then
+        AnchorOverlayToFill(overlay, healthBar, fill, parent)
+        ApplyTiledOverlayTexture(overlay, fill, healthBar, OVERLAY_TILE_SIZE)
+    elseif overlayWidth and overlayWidth > 0 then
+        AnchorOverlayToHealthBarWidth(overlay, healthBar, overlayWidth, parent)
+        local totalHeight = SafeOverlayHeight(healthBar)
+        overlay:SetHorizTile(true)
+        overlay:SetVertTile(true)
+        overlay:SetTexCoord(0, overlayWidth / OVERLAY_TILE_SIZE, 0, totalHeight / OVERLAY_TILE_SIZE)
+    else
+        return
+    end
     overlay:SetBlendMode("BLEND")
     overlay:SetVertexColor(tint.r or 1, tint.g or 1, tint.b or 1, settings.overlayAlpha)
     overlay:Show()
@@ -916,11 +995,9 @@ local function ApplyOvershieldBar(frame, healthBar, absorbAmount, maxHealth, ove
 
     local settings = GetOverlaySettings()
     local tintColor = GetOverlayTintColor(settings)
+    local unit = frame.unit or frame.displayedUnit
 
-    clip:ClearAllPoints()
-    clip:SetPoint("TOPLEFT", healthFill, "TOPLEFT", 0, 0)
-    clip:SetPoint("BOTTOMRIGHT", healthFill, "BOTTOMRIGHT", 0, 0)
-    clip:Show()
+    AnchorOvershieldClip(clip, healthBar, healthFill, overshieldAmount, unit, frame)
 
     bar:ClearAllPoints()
     bar:SetPoint("TOPLEFT", healthBar, "TOPLEFT", 0, 0)
@@ -949,15 +1026,27 @@ local function ApplyOvershieldBar(frame, healthBar, absorbAmount, maxHealth, ove
         return false
     end
 
-    ApplyStripePatternOverlay(frame, healthBar, fill, bar, settings)
+    ApplyStripePatternOverlay(frame, healthBar, fill, bar, settings, absorbAmount, maxHealth)
 
     if glow and not glow:IsForbidden() and settings.showGlow and ShouldShowOvershieldGlow(frame, overshieldAmount, fill) then
         local color = settings.glowColor
         glow:SetParent(clip)
         glow:SetDrawLayer("OVERLAY", 7)
         glow:ClearAllPoints()
-        glow:SetPoint("TOPLEFT", fill, "TOPLEFT", GLOW_EDGE_OFFSET, 0)
-        glow:SetPoint("BOTTOMLEFT", fill, "BOTTOMLEFT", GLOW_EDGE_OFFSET, 0)
+        local fillWidth = fill and SafeNumber(fill:GetWidth())
+        if fillWidth and fillWidth > 0 then
+            glow:SetPoint("TOPLEFT", fill, "TOPLEFT", GLOW_EDGE_OFFSET, 0)
+            glow:SetPoint("BOTTOMLEFT", fill, "BOTTOMLEFT", GLOW_EDGE_OFFSET, 0)
+        else
+            local overlayWidth = ComputeAbsorbOverlayWidth(healthBar, absorbAmount, maxHealth)
+            if overlayWidth and overlayWidth > 0 then
+                glow:SetPoint("TOPRIGHT", healthBar, "TOPRIGHT", -overlayWidth + GLOW_EDGE_OFFSET, 0)
+                glow:SetPoint("BOTTOMRIGHT", healthBar, "BOTTOMRIGHT", -overlayWidth + GLOW_EDGE_OFFSET, 0)
+            else
+                glow:SetPoint("TOPLEFT", fill, "TOPLEFT", GLOW_EDGE_OFFSET, 0)
+                glow:SetPoint("BOTTOMLEFT", fill, "BOTTOMLEFT", GLOW_EDGE_OFFSET, 0)
+            end
+        end
         glow:SetBlendMode("ADD")
         glow:SetVertexColor(color.r or 1, color.g or 1, color.b or 1, settings.glowAlpha)
         glow:Show()
@@ -1453,7 +1542,7 @@ local function PrintDebugInfo()
             end
 
             ChatPrint("|cff00ccffShieldFrames|r readable absorb: " .. tostring(UnitHasReadableAbsorb(unit)))
-            ChatPrint("|cff00ccffShieldFrames|r barrier aura active: " .. tostring(UnitHasDamageBarrierAura(unit)))
+            ChatPrint("|cff00ccffShieldFrames|r absorb aura active: " .. tostring(UnitHasKnownAbsorbAura(unit)))
             ChatPrint("|cff00ccffShieldFrames|r readable overshield: " .. tostring(
                 playerFrame and UnitHasReadableOvershield(unit, playerFrame) or "no player frame"
             ))
