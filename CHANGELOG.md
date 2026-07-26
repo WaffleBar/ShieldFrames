@@ -2,6 +2,11 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.86] — 2026-07-26
+
+### Changed
+- Release bump so WowUp Hub re-indexes GitHub social preview thumbnail art
+
 ## [1.0.85] — 2026-07-26
 
 ### Fixed
