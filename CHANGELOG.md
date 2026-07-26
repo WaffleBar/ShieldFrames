@@ -2,6 +2,11 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.87] — 2026-07-26
+
+### Changed
+- Replaced WowUp Hub gallery with three new high-res previews (colored overshield, cyan overshield, settings)
+
 ## [1.0.86] — 2026-07-26
 
 ### Changed
