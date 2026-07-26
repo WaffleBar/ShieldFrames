@@ -2,6 +2,200 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.85] — 2026-07-26
+
+### Fixed
+- Glow pins to the stripe’s left edge instead of a reversed width anchor that jumped left when combat ended
+- When fill width is readable, stripe anchors to the reverse-fill again so the post-combat health/stripe gap closes
+
+## [1.0.84] — 2026-07-26
+
+### Fixed
+- Combat stripe/glow sizing uses readable absorb (or last known amount) and owned bar width instead of secret `SetValue` / `GetWidth`
+- Stripe texcoords track absorb/max continuously so the texture keeps up while Blood Shield changes
+- Leaving combat no longer hard-clears the overlay while Blood Shield is still active (avoids the post-combat jump)
+
+## [1.0.83] — 2026-07-26
+
+### Fixed
+- Custom overshield glow shows again when fill width is secret (combat Blood Shield path)
+- Glow is only suppressed when width is known to be under 8px, not when width is unavailable
+
+## [1.0.82] — 2026-07-26
+
+### Fixed
+- Leaving combat force-clears custom overlays so secret absorb cannot leave a tiny stripe/glow stuck on the bar tip
+- Out of combat, status-bar rendering requires readable absorb+max; secret bar/bootstrap paths are combat-only (unless Blizzard glow is still live)
+- Glow is hidden when the overlay fill is under 8px wide to avoid the stray edge line
+
+## [1.0.81] — 2026-07-26
+
+### Fixed
+- In-combat Blood Shield no longer clears when aura scans fail under Midnight secret values
+- Combat secret absorb only persists with a known aura, last readable absorb, or recent `UNIT_ABSORB_AMOUNT_CHANGED` (Death Strike)
+- Known-absorb aura cache is retained across failed combat aura lookups
+- Safer aura lookups via `pcall` / `GetAuraDataBySpellID`; Anti-Magic Shell added to known absorb list
+- Leaving combat refreshes frames and clears stale absorb-event state
+
+## [1.0.80] — 2026-07-26
+
+### Changed
+- Debug tip no longer assumes mage barriers; mentions Blood Shield and other combat absorbs
+
+## [1.0.79] — 2026-07-26
+
+### Fixed
+- Combat no longer clears an active shield overlay solely because calculator values are secret
+- Cached known-absorb aura state persists across combat when live aura scans fail
+- Secret max health from the heal calculator is kept for status-bar sizing in combat
+- Status bar accepts secret max and/or secret absorb (`status-bar-secret*` paths)
+
+## [1.0.78] — 2026-07-26
+
+### Fixed
+- Debug apply path/bootstrap mode reset when the overlay is cleared
+
+## [1.0.77] — 2026-07-26
+
+### Fixed
+- Overlay no longer persists after shield expires when only secret calculator values and a stale custom overlay remain
+- Secret absorb now uses the dynamic status bar when max health is readable (`status-bar-secret` path)
+- Bootstrap fill anchor only runs when health is below max; full-HP zero-width fill fallback removed
+- Removed fixed 48px bootstrap fallback that kept a static stripe after Blizzard glow faded
+
+## [1.0.76] — 2026-07-26
+
+### Fixed
+- `UnitHealthMax` is now used for sizing even when current health is secret/unreadable
+- Status-bar path requires a readable max health; otherwise falls back to bootstrap fill/width overlay
+- Debug reports effective max health, apply path, and clarifies stripe texture on the status bar
+
+## [1.0.75] — 2026-07-26
+
+### Fixed
+- Bootstrap no longer treats faded Blizzard glow (`IsShown` at alpha 0) as full-HP width mode; fill anchor tracks health after the glow is hidden
+- Full-HP overshield still uses fixed-width stripe only while unfaded Blizzard glow is active
+- Overlay stripe draw layer raised so it renders above the health bar fill
+
+## [1.0.74] — 2026-07-26
+
+### Fixed
+- Full-HP overshield no longer uses a zero-width fill anchor; Blizzard glow now triggers the fixed-width stripe bootstrap first
+- Damaged-health overshields still use fill-anchored stripes that track the health bar
+
+## [1.0.73] — 2026-07-26
+
+### Fixed
+- Secret calculator absorb no longer counts as active without a live aura, glow, or existing overlay; shields clear when readable absorb is explicitly zero
+- Bootstrap overlay re-anchors to the health fill every update so the stripe tracks health instead of freezing
+- Removed max-health-unavailable early exit that left stale overlays visible while skipping re-apply
+- Full-HP overshield uses fixed-width bootstrap only while Blizzard overshield glow is active
+
+## [1.0.72] — 2026-07-26
+
+### Fixed
+- Eliminated all `healthBar:GetWidth()` reads on Blizzard unit frames, which taint heal prediction even outside hooks
+- Pet frame is no longer updated for midnight overshields; stale pet overlays are cleared instead
+- Bootstrap overlay width uses a safe default/cached value rather than querying bar geometry
+
+## [1.0.71] — 2026-07-26
+
+### Fixed
+- Unit frame hook updates are deferred to the next frame so health bar width reads no longer taint Blizzard heal prediction secret values
+- Health values prefer `UnitHealth`/`UnitHealthMax` over status bar reads; bar width is cached and wrapped in safe pcalls
+
+## [1.0.70] — 2026-07-26
+
+### Fixed
+- Overlay no longer persists after the shield is gone; absorb detection no longer treats stale flags, faded glow, or secret calculator placeholders as active absorb
+- Bootstrap stripe overlay now anchors to the live health fill when health is below max, so it moves as health changes instead of staying at a fixed pixel width
+- Secret absorb values only count as active while the calculator has not reported an explicit zero
+
+## [1.0.69] — 2026-07-26
+
+### Fixed
+- Midnight absorb detection now treats secret calculator values, faded Blizzard glow, and active custom overlays as valid absorb signals
+- Overlay no longer disappears on the next tick after the Blizzard overshield glow is hidden by ShieldFrames
+
+## [1.0.68] — 2026-07-26
+
+### Fixed
+- Bootstrap stripe overlay no longer crashes with "attempt to call a nil value" at apply time; `ApplyOverlayAndGlow` is defined before bootstrap callers (Lua forward-reference fix)
+
+## [1.0.67] — 2026-07-26
+
+### Fixed
+- Midnight combat updates now detect secret absorb values and Blizzard overshield glow reliably instead of exiting before apply
+- Secret absorb coalescing no longer uses `or`, which could drop secret calculator values
+- Update lock skips, inner pcall failures, and early-exit reasons are recorded and shown in `/sfdebug`
+- Unsafe `IsForbidden()` calls in blizzard overlay suppression and hide paths
+
+## [1.0.66] — 2026-07-26
+
+### Fixed
+- `/sfdebug` no longer crashes with "attempt to call a nil value" when checking midnight absorb state
+- `FrameShowsAbsorbBar` is defined before callers that reference it, fixing a Lua forward-reference bug in combat
+
+## [1.0.65] — 2026-07-26
+
+### Fixed
+- Midnight player frame updates no longer bail out when the Blizzard health bar is forbidden in combat
+- Bootstrap stripe overlay textures parent to the unit frame when the health bar cannot accept child frames
+- `/sfdebug` reports health bar forbidden state, absorb detection signals, and last apply result
+
+## [1.0.64] — 2026-07-25
+
+### Fixed
+- Player frame updates no longer silently abort when `healthBar:IsForbidden` is missing (Lua method call error)
+- Safe forbidden checks on custom overlay textures used by debug and overlay visibility detection
+
+## [1.0.63] — 2026-07-25
+
+### Fixed
+- Bootstrap stripe overlay no longer fails in combat when health bar width/height is secret or zero; falls back to a fixed pixel width while Blizzard overshield glow is active
+- Health bar width reads are wrapped in safe accessors for midnight secret dimensions
+
+## [1.0.62] — 2026-07-25
+
+### Fixed
+- Secret midnight absorb values now use a geometry-based stripe overlay when the reverse-fill status bar cannot accept secret SetValue
+- Update lock is always released even if midnight rendering errors, preventing stuck frame updates
+- `/sfdebug` refreshes the player frame first and reports both status-bar and texture overlay state
+
+## [1.0.61] — 2026-07-25
+
+### Fixed
+- Midnight combat rendering now passes secret calculator absorb values directly to the overlay status bar instead of discarding them
+- Stripe overlay anchors to the rendered fill even when fill width is secret/unreadable
+- Debug output distinguishes secret values that are still being rendered from unavailable values
+
+## [1.0.60] — 2026-07-25
+
+### Fixed
+- Custom overlay renders when Blizzard's `overAbsorbGlow` is active but midnight absorb amounts are secret
+- Secret calculator/readable absorb values fall back to bar width, missing-health, or last-known estimates instead of aborting
+- `/sfdebug` no longer misreports "no player frame" when readable overshield is simply false
+
+## [1.0.59] — 2026-07-25
+
+### Fixed
+- `/sfdebug` and absorb aura parsing no longer crash when Midnight marks aura table fields as secret
+- Aura spell ID and absorb point reads are wrapped in safe accessors compatible with secret values
+
+## [1.0.58] — 2026-07-25
+
+### Fixed
+- Blood Shield and other known absorb auras render again when aura absorb amounts are secret, while still clearing once aura points read zero
+- Hide logic no longer treats "buff present + unreadable absorb" as "no absorb"
+- Last-known absorb amount is reused only while a non-depleted known absorb aura remains active
+
+## [1.0.57] — 2026-07-25
+
+### Fixed
+- Overshield overlay no longer persists after absorb fades when a known absorb aura buff is still present but its remaining amount reads zero
+- Absorb aura detection now requires live absorb (readable points, total absorbs, or Blizzard absorb bar) instead of buff presence alone
+- Stale bar-width estimates are ignored once Blizzard's absorb bar is hidden
+
 ## [1.0.56] — 2026-07-25
 
 ### Fixed

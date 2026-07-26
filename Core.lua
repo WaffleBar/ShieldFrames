@@ -111,6 +111,59 @@ local function CanAccessValue(value)
     return canaccessvalue and canaccessvalue(value)
 end
 
+local function HasMidnightRenderAbsorb(absorbAmount, secretAbsorb)
+    if absorbAmount ~= nil and (CanAccessValue(absorbAmount) or IsSecret(absorbAmount)) then
+        return true
+    end
+    return secretAbsorb ~= nil
+end
+
+local function PickMidnightRenderAbsorb(absorbAmount, secretAbsorb)
+    if absorbAmount ~= nil and (CanAccessValue(absorbAmount) or IsSecret(absorbAmount)) then
+        return absorbAmount
+    end
+    return secretAbsorb
+end
+
+local function SafeAuraField(aura, field)
+    if not aura or not field then
+        return nil
+    end
+
+    local ok, value = pcall(function()
+        return aura[field]
+    end)
+    if not ok then
+        return nil
+    end
+
+    return value
+end
+
+local function SafeAuraSpellId(aura)
+    local spellId = SafeAuraField(aura, "spellId")
+    if spellId == nil or not CanAccessValue(spellId) then
+        return nil
+    end
+
+    return spellId
+end
+
+local function IsFrameForbidden(frame)
+    return frame and type(frame.IsForbidden) == "function" and frame:IsForbidden()
+end
+
+local function GetOverlayParentFrame(frame, healthBar)
+    if healthBar and not IsFrameForbidden(healthBar) then
+        return healthBar
+    end
+    return frame
+end
+
+local function GetOverlayAnchorFrame(frame, healthBar)
+    return healthBar or frame
+end
+
 local function SafeCompare(fn)
     local ok, result = pcall(fn)
     if not ok then
@@ -236,6 +289,29 @@ local function FrameShowsOvershieldGlow(frame)
     return not frame.ShieldFramesBlizzGlowFaded
 end
 
+local function FrameHasBlizzOvershieldGlow(frame)
+    local ok, active = pcall(FrameShowsOvershieldGlow, frame)
+    return ok and active
+end
+
+local function FrameHasRawOvershieldGlow(frame)
+    local glow = frame and frame.overAbsorbGlow
+    if not glow or IsFrameForbidden(glow) then
+        return false
+    end
+    return glow:IsShown()
+end
+
+local function HasSecretAbsorbValue(totalAbsorb, overshieldAmount)
+    if totalAbsorb ~= nil and not CanAccessValue(totalAbsorb) then
+        return true
+    end
+    if overshieldAmount ~= nil and not CanAccessValue(overshieldAmount) then
+        return true
+    end
+    return false
+end
+
 local function SetFrameOvershieldActive(frame, active)
     frame.ShieldFramesOvershieldActive = active or nil
 end
@@ -262,21 +338,34 @@ local function RestoreBlizzOvershieldGlow(frame, glow)
 end
 
 local function GetUnitHealthValues(frame, unit)
-    local healthBar = frame.healthbar or frame.healthBar
+    local healthBar = frame and (frame.healthbar or frame.healthBar)
+
+    if unit then
+        local rawCur = UnitHealth(unit)
+        local rawMax = UnitHealthMax(unit)
+        local curHealth = rawCur ~= nil and CanAccessValue(rawCur) and SafeNumber(rawCur) or nil
+        local maxHealth = rawMax ~= nil and CanAccessValue(rawMax) and SafeNumber(rawMax) or nil
+        if curHealth or maxHealth then
+            return curHealth, maxHealth, healthBar
+        end
+    end
+
+    if UsesHealPredictionCalculator() then
+        return nil, nil, healthBar
+    end
+
     if not healthBar then
         return
     end
 
-    local curHealth = SafeNumber(healthBar:GetValue())
-    local _, maxHealth = healthBar:GetMinMaxValues()
-    maxHealth = SafeNumber(maxHealth)
-
-    if (not curHealth or not maxHealth) and unit then
-        curHealth = SafeNumber(UnitHealth(unit))
-        maxHealth = SafeNumber(UnitHealthMax(unit))
+    local ok, curHealth, maxHealth = pcall(function()
+        return healthBar:GetValue(), select(2, healthBar:GetMinMaxValues())
+    end)
+    if not ok then
+        return
     end
 
-    return curHealth, maxHealth, healthBar
+    return SafeNumber(curHealth), SafeNumber(maxHealth), healthBar
 end
 
 local function UnitHasReadableOvershield(unit, frame)
@@ -321,6 +410,7 @@ local ABSORB_AURA_SPELL_IDS = {
     [235450] = true, -- Prismatic Barrier
     [11426] = true,  -- Ice Barrier
     [77535] = true,  -- Blood Shield (Blood DK)
+    [48707] = true,  -- Anti-Magic Shell
     [17] = true,     -- Power Word: Shield
     [184662] = true, -- Shield of Vengeance
     [271466] = true, -- Luminous Barrier
@@ -332,28 +422,49 @@ local MAGE_BARRIER_SPELL_IDS = {
     [11426] = true,
 }
 
+local function SafeGetAuraBySpellID(unit, spellId)
+    if not unit or not spellId or not C_UnitAuras then
+        return nil
+    end
+
+    if unit == "player" and C_UnitAuras.GetPlayerAuraBySpellID then
+        local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, spellId)
+        if ok and aura then
+            return aura
+        end
+    end
+
+    if C_UnitAuras.GetAuraDataBySpellID then
+        local ok, aura = pcall(C_UnitAuras.GetAuraDataBySpellID, unit, spellId)
+        if ok and aura then
+            return aura
+        end
+    end
+
+    return nil
+end
+
 local function GetKnownAbsorbAuraData(unit)
     if not unit or not C_UnitAuras then
         return nil
     end
 
-    if unit == "player" and C_UnitAuras.GetPlayerAuraBySpellID then
-        for spellId in pairs(ABSORB_AURA_SPELL_IDS) do
-            local aura = C_UnitAuras.GetPlayerAuraBySpellID(spellId)
-            if aura then
-                return aura, spellId
-            end
+    for spellId in pairs(ABSORB_AURA_SPELL_IDS) do
+        local aura = SafeGetAuraBySpellID(unit, spellId)
+        if aura then
+            return aura, spellId
         end
     end
 
     if C_UnitAuras.GetAuraDataByIndex then
-        for index = 1, 255 do
-            local aura = C_UnitAuras.GetAuraDataByIndex(unit, index, "HELPFUL")
-            if not aura then
-                break
-            end
-            if aura.spellId and ABSORB_AURA_SPELL_IDS[aura.spellId] then
-                return aura, aura.spellId
+        -- Never break on a nil slot: Midnight can omit secret auras mid-list.
+        for index = 1, 40 do
+            local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, index, "HELPFUL")
+            if ok and aura then
+                local spellId = SafeAuraSpellId(aura)
+                if spellId and ABSORB_AURA_SPELL_IDS[spellId] then
+                    return aura, spellId
+                end
             end
         end
     end
@@ -371,24 +482,132 @@ end
 
 local function GetAbsorbFromKnownAura(unit)
     local aura = GetKnownAbsorbAuraData(unit)
-    if not aura or not aura.points then
+    if not aura then
         return nil
     end
 
-    for _, point in ipairs(aura.points) do
-        if point ~= nil and CanAccessValue(point) then
+    local points = SafeAuraField(aura, "points")
+    if not points then
+        return nil
+    end
+
+    local sawReadableZero = false
+    for index = 1, 32 do
+        local point = SafeAuraField(points, index)
+        if point == nil then
+            break
+        end
+        if CanAccessValue(point) then
             local amount = SafeNumber(point)
             if amount and amount > 0 then
                 return amount
             end
+            if amount == 0 then
+                sawReadableZero = true
+            end
         end
+    end
+
+    if sawReadableZero then
+        return 0
     end
 
     return nil
 end
 
-local function GetAbsorbFromBarrierAura(unit)
-    return GetAbsorbFromKnownAura(unit)
+local function KnownAbsorbAuraIsDepleted(unit)
+    return GetAbsorbFromKnownAura(unit) == 0
+end
+
+local function UnitHasKnownAbsorbCandidate(unit)
+    if not UnitHasKnownAbsorbAura(unit) then
+        return false
+    end
+    return not KnownAbsorbAuraIsDepleted(unit)
+end
+
+local function RefreshKnownAbsorbAuraState(frame, unit)
+    if not frame or not unit then
+        return
+    end
+
+    if KnownAbsorbAuraIsDepleted(unit) then
+        frame.ShieldFramesKnownAbsorbAuraPresent = false
+        return
+    end
+
+    if UnitHasKnownAbsorbAura(unit) then
+        frame.ShieldFramesKnownAbsorbAuraPresent = true
+        return
+    end
+
+    -- Failed scan: keep cache in combat (Blood Shield aura lookups often fail under Midnight).
+    if unit == "player" and UnitAffectingCombat(unit) then
+        return
+    end
+
+    if UnitHasReadableAbsorb(unit) == false then
+        frame.ShieldFramesKnownAbsorbAuraPresent = false
+        return
+    end
+
+    frame.ShieldFramesKnownAbsorbAuraPresent = false
+end
+
+local function KnownAbsorbAuraEvidenceActive(frame, unit)
+    if unit and UnitHasKnownAbsorbCandidate(unit) then
+        return true
+    end
+    return frame and frame.ShieldFramesKnownAbsorbAuraPresent == true
+end
+
+local function FrameShowsCustomOverlay(frame)
+    if not frame then
+        return false
+    end
+
+    if frame.ShieldFramesOverlayBar
+        and not IsFrameForbidden(frame.ShieldFramesOverlayBar)
+        and frame.ShieldFramesOverlayBar:IsShown()
+    then
+        return true
+    end
+
+    if frame.ShieldFramesOverlay
+        and not IsFrameForbidden(frame.ShieldFramesOverlay)
+        and frame.ShieldFramesOverlay:IsShown()
+    then
+        return true
+    end
+
+    return false
+end
+
+local function HasCombatSecretAbsorbSignal(unit, totalAbsorb, overshieldAmount)
+    return unit
+        and UnitAffectingCombat(unit)
+        and HasSecretAbsorbValue(totalAbsorb, overshieldAmount)
+end
+
+local function HasRecentAbsorbEvent(frame)
+    if not frame or not frame.ShieldFramesLastAbsorbEvent then
+        return false
+    end
+    return (GetTime() - frame.ShieldFramesLastAbsorbEvent) < 12
+end
+
+local function ShouldPersistCombatSecretAbsorb(frame, unit, totalAbsorb, overshieldAmount)
+    if not HasCombatSecretAbsorbSignal(unit, totalAbsorb, overshieldAmount) then
+        return false
+    end
+    if KnownAbsorbAuraEvidenceActive(frame, unit) then
+        return true
+    end
+    if frame and frame.ShieldFramesLastAbsorbAmount and frame.ShieldFramesLastAbsorbAmount > 0 then
+        return true
+    end
+    -- Blood DK: Death Strike fires UNIT_ABSORB_AMOUNT_CHANGED even when aura scans fail.
+    return HasRecentAbsorbEvent(frame)
 end
 
 local function FrameShowsAbsorbBar(frame)
@@ -398,6 +617,45 @@ local function FrameShowsAbsorbBar(frame)
     end
 
     return bar:IsShown()
+end
+
+local function FrameHasOvershieldVisualSignal(frame)
+    if FrameShowsAbsorbBar(frame) then
+        return true
+    end
+    return FrameHasBlizzOvershieldGlow(frame)
+end
+
+local function UnitHasActiveKnownAbsorb(unit, frame)
+    if not unit then
+        return false
+    end
+
+    local fromAura = GetAbsorbFromKnownAura(unit)
+    if fromAura and fromAura > 0 then
+        return true
+    end
+    if fromAura == 0 then
+        return false
+    end
+
+    if UnitHasKnownAbsorbCandidate(unit) then
+        return true
+    end
+
+    if UnitHasReadableAbsorb(unit) == true then
+        return true
+    end
+
+    if frame and FrameShowsAbsorbBar(frame) then
+        return true
+    end
+
+    return false
+end
+
+local function GetAbsorbFromBarrierAura(unit)
+    return GetAbsorbFromKnownAura(unit)
 end
 
 local function GetReadableAbsorbAmount(frame, unit, calculatorAbsorb)
@@ -433,22 +691,48 @@ local function GetReadableAbsorbAmount(frame, unit, calculatorAbsorb)
 end
 
 local function EstimateAbsorbFromBarWidth(frame, healthBar, maxHealth)
-    if not frame or not healthBar or not maxHealth or not CanAccessValue(maxHealth) then
+    -- Never read Blizzard unit frame bar widths; it taints heal prediction secrets.
+    return nil
+end
+
+local function EstimateAbsorbFromOvershieldContext(frame, unit, healthBar, maxHealth)
+    if not frame then
         return nil
     end
 
-    local absorbBar = frame.totalAbsorb
-    if not absorbBar or (type(absorbBar.IsForbidden) == "function" and absorbBar:IsForbidden()) or not absorbBar:IsShown() then
+    local hasGlow = FrameHasBlizzOvershieldGlow(frame)
+    local hasAbsorbBar = FrameShowsAbsorbBar(frame)
+    if not hasGlow and not hasAbsorbBar then
         return nil
     end
 
-    local absorbWidth = SafeNumber(absorbBar:GetWidth())
-    local healthWidth = SafeNumber(healthBar:GetWidth())
-    if not absorbWidth or not healthWidth or healthWidth <= 0 or absorbWidth <= 0 then
+    local curHealth, resolvedMax = GetUnitHealthValues(frame, unit)
+    local renderMax = maxHealth
+    if not renderMax or not CanAccessValue(renderMax) then
+        renderMax = resolvedMax
+    end
+    if not renderMax or not CanAccessValue(renderMax) then
         return nil
     end
 
-    return (absorbWidth / healthWidth) * maxHealth
+    if frame.ShieldFramesPendingAbsorbEstimate and frame.ShieldFramesPendingAbsorbEstimate > 0 then
+        return frame.ShieldFramesPendingAbsorbEstimate
+    end
+
+    local barEstimate = EstimateAbsorbFromBarWidth(frame, healthBar, renderMax)
+    if barEstimate and barEstimate > 0 then
+        return barEstimate
+    end
+
+    if curHealth and CanAccessValue(curHealth) and renderMax > curHealth then
+        return renderMax - curHealth
+    end
+
+    if frame.ShieldFramesLastAbsorbAmount and frame.ShieldFramesLastAbsorbAmount > 0 then
+        return frame.ShieldFramesLastAbsorbAmount
+    end
+
+    return nil
 end
 
 local function GetKnownAbsorbAmount(unit, frame, healthBar, maxHealth)
@@ -458,8 +742,11 @@ local function GetKnownAbsorbAmount(unit, frame, healthBar, maxHealth)
 
     local _, spellId = GetKnownAbsorbAuraData(unit)
     local fromAura = GetAbsorbFromKnownAura(unit)
-    if fromAura and fromAura > 0 then
-        return fromAura
+    if fromAura ~= nil then
+        if fromAura > 0 then
+            return fromAura
+        end
+        return nil
     end
 
     if frame and healthBar and maxHealth and CanAccessValue(maxHealth) then
@@ -471,6 +758,10 @@ local function GetKnownAbsorbAmount(unit, frame, healthBar, maxHealth)
 
     if frame and frame.ShieldFramesPendingAbsorbEstimate and frame.ShieldFramesPendingAbsorbEstimate > 0 then
         return frame.ShieldFramesPendingAbsorbEstimate
+    end
+
+    if frame and frame.ShieldFramesLastAbsorbAmount and frame.ShieldFramesLastAbsorbAmount > 0 then
+        return frame.ShieldFramesLastAbsorbAmount
     end
 
     if spellId and MAGE_BARRIER_SPELL_IDS[spellId] and maxHealth and CanAccessValue(maxHealth) then
@@ -495,7 +786,7 @@ local function ShouldShowOvershieldGlow(frame, overshieldAmount, fill)
     end
     if hasOvershield == false then
         local unit = frame.unit or frame.displayedUnit
-        if unit and UnitHasKnownAbsorbAura(unit) then
+        if unit and UnitHasActiveKnownAbsorb(unit, frame) then
             return true
         end
         if unit and UnitHasReadableAbsorb(unit) == true then
@@ -507,49 +798,21 @@ local function ShouldShowOvershieldGlow(frame, overshieldAmount, fill)
         return false
     end
 
-    -- Secret overshield amount: follow live absorb signals only.
+    -- Secret overshield amount: follow live absorb signals / active custom overlay.
     local unit = frame.unit or frame.displayedUnit
-    if unit and UnitHasKnownAbsorbAura(unit) then
+    if unit and UnitHasActiveKnownAbsorb(unit, frame) then
         return true
     end
     if FrameShowsAbsorbBar(frame) then
         return true
     end
-
-    return false
-end
-
-local function HasClearNoAbsorbSignal(frame, unit, totalAbsorb, overshieldAmount)
-    if unit and UnitHasKnownAbsorbAura(unit) then
-        return false
+    if frame and frame.ShieldFramesOvershieldActive then
+        return true
     end
-
-    if FrameShowsAbsorbBar(frame) then
-        return false
+    if FrameShowsCustomOverlay(frame) then
+        return true
     end
-
-    local ok, blizzGlowActive = pcall(FrameShowsOvershieldGlow, frame)
-    if ok and blizzGlowActive then
-        return false
-    end
-
-    if unit then
-        local readableAbsorb = UnitHasReadableAbsorb(unit)
-        if readableAbsorb == true then
-            return false
-        end
-        if readableAbsorb == false then
-            return true
-        end
-    end
-
-    if SafeGreaterThan(totalAbsorb, 0) == true then
-        return false
-    end
-    if SafeGreaterThan(overshieldAmount, 0) == true then
-        return false
-    end
-    if SafeLessOrEqual(totalAbsorb, 0) == true then
+    if unit and UnitAffectingCombat(unit) and HasRecentAbsorbEvent(frame) then
         return true
     end
 
@@ -567,8 +830,20 @@ local function HasReadableNoOvershield(unit, frame)
     return false
 end
 
-local function MidnightFrameHasAbsorb(frame, overshieldAmount, totalAbsorb, unit)
-    if unit and UnitHasKnownAbsorbAura(unit) then
+local function HasActiveAbsorbEvidence(frame, unit, totalAbsorb, overshieldAmount)
+    if unit and UnitHasActiveKnownAbsorb(unit, frame) then
+        return true
+    end
+
+    if FrameShowsAbsorbBar(frame) then
+        return true
+    end
+
+    if FrameHasBlizzOvershieldGlow(frame) then
+        return true
+    end
+
+    if unit and UnitHasReadableAbsorb(unit) == true then
         return true
     end
 
@@ -577,37 +852,110 @@ local function MidnightFrameHasAbsorb(frame, overshieldAmount, totalAbsorb, unit
         return true
     end
 
-    local hasOvershield = IsPositiveAmount(overshieldAmount)
-    if hasOvershield == true then
+    if IsPositiveAmount(overshieldAmount) == true then
         return true
     end
 
     if SafeGreaterThan(totalAbsorb, 0) == true then
         return true
     end
+
     if SafeLessOrEqual(totalAbsorb, 0) == true then
         return false
     end
 
-    if FrameShowsAbsorbBar(frame) then
-        return true
-    end
-
-    local ok, blizzGlowActive = pcall(FrameShowsOvershieldGlow, frame)
-    if ok and blizzGlowActive then
-        return true
+    if HasSecretAbsorbValue(totalAbsorb, overshieldAmount) then
+        if SafeLessOrEqual(totalAbsorb, 0) == true then
+            return false
+        end
+        if FrameHasBlizzOvershieldGlow(frame) then
+            return true
+        end
+        if KnownAbsorbAuraEvidenceActive(frame, unit) then
+            return true
+        end
+        if ShouldPersistCombatSecretAbsorb(frame, unit, totalAbsorb, overshieldAmount) then
+            return true
+        end
+        return false
     end
 
     return false
 end
 
+local function HasClearNoAbsorbSignal(frame, unit, totalAbsorb, overshieldAmount)
+    if unit and KnownAbsorbAuraIsDepleted(unit) then
+        return true
+    end
+
+    if FrameHasBlizzOvershieldGlow(frame) then
+        return false
+    end
+
+    if FrameShowsAbsorbBar(frame) then
+        return false
+    end
+
+    if unit and UnitHasReadableAbsorb(unit) == true then
+        return false
+    end
+
+    if KnownAbsorbAuraEvidenceActive(frame, unit) then
+        return false
+    end
+
+    if SafeGreaterThan(totalAbsorb, 0) == true then
+        return false
+    end
+
+    if SafeGreaterThan(overshieldAmount, 0) == true then
+        return false
+    end
+
+    if SafeLessOrEqual(totalAbsorb, 0) == true then
+        return true
+    end
+
+    if unit and UnitHasReadableAbsorb(unit) == false then
+        return true
+    end
+
+    if HasSecretAbsorbValue(totalAbsorb, overshieldAmount) then
+        if ShouldPersistCombatSecretAbsorb(frame, unit, totalAbsorb, overshieldAmount) then
+            return false
+        end
+        if FrameHasBlizzOvershieldGlow(frame) then
+            return false
+        end
+        if FrameShowsAbsorbBar(frame) then
+            return false
+        end
+        return true
+    end
+
+    return not HasActiveAbsorbEvidence(frame, unit, totalAbsorb, overshieldAmount)
+end
+
+local function MidnightFrameHasAbsorb(frame, overshieldAmount, totalAbsorb, unit)
+    return HasActiveAbsorbEvidence(frame, unit, totalAbsorb, overshieldAmount)
+end
+
 local function ResolveMidnightRenderValues(frame, unit, totalAbsorb, maxHealth, healthBar)
     local _, resolvedMax = GetUnitHealthValues(frame, unit)
-    if (not maxHealth or not CanAccessValue(maxHealth)) and resolvedMax and CanAccessValue(resolvedMax) then
+    if resolvedMax and CanAccessValue(resolvedMax) then
         maxHealth = resolvedMax
     end
 
+    local secretAbsorb
+    if totalAbsorb ~= nil and not CanAccessValue(totalAbsorb) then
+        secretAbsorb = totalAbsorb
+    end
+
     local absorbAmount = GetReadableAbsorbAmount(frame, unit, totalAbsorb)
+    if absorbAmount ~= nil and not CanAccessValue(absorbAmount) then
+        secretAbsorb = absorbAmount
+        absorbAmount = nil
+    end
     if (absorbAmount == nil or absorbAmount <= 0) and frame and healthBar and maxHealth and CanAccessValue(maxHealth) then
         local estimated = EstimateAbsorbFromBarWidth(frame, healthBar, maxHealth)
         if estimated and estimated > 0 then
@@ -616,7 +964,9 @@ local function ResolveMidnightRenderValues(frame, unit, totalAbsorb, maxHealth, 
     end
 
     if (absorbAmount == nil or absorbAmount <= 0) and frame and frame.ShieldFramesPendingAbsorbEstimate then
-        absorbAmount = frame.ShieldFramesPendingAbsorbEstimate
+        if FrameShowsAbsorbBar(frame) or (unit and UnitHasKnownAbsorbCandidate(unit)) then
+            absorbAmount = frame.ShieldFramesPendingAbsorbEstimate
+        end
     end
 
     if (absorbAmount == nil or absorbAmount <= 0) and unit then
@@ -626,7 +976,27 @@ local function ResolveMidnightRenderValues(frame, unit, totalAbsorb, maxHealth, 
         end
     end
 
-    return absorbAmount, maxHealth
+    if (absorbAmount == nil or absorbAmount <= 0)
+        and frame
+        and frame.ShieldFramesLastAbsorbAmount
+        and frame.ShieldFramesLastAbsorbAmount > 0
+    then
+        if KnownAbsorbAuraEvidenceActive(frame, unit)
+            or FrameHasBlizzOvershieldGlow(frame)
+            or ShouldPersistCombatSecretAbsorb(frame, unit, totalAbsorb, secretAbsorb or totalAbsorb)
+        then
+            absorbAmount = frame.ShieldFramesLastAbsorbAmount
+        end
+    end
+
+    if (absorbAmount == nil or absorbAmount <= 0) and frame and FrameHasBlizzOvershieldGlow(frame) then
+        local estimated = EstimateAbsorbFromOvershieldContext(frame, unit, healthBar, maxHealth)
+        if estimated and estimated > 0 then
+            absorbAmount = estimated
+        end
+    end
+
+    return absorbAmount, maxHealth, secretAbsorb
 end
 
 local function IsEnabled()
@@ -709,13 +1079,13 @@ end
 local function SuppressBlizzAbsorbOverlays(frame, healthBar)
     for _, key in ipairs(BLIZZ_ABSORB_OVERLAY_KEYS) do
         local blizzOverlay = frame and frame[key]
-        if blizzOverlay and not blizzOverlay:IsForbidden() then
+        if blizzOverlay and not IsFrameForbidden(blizzOverlay) then
             blizzOverlay:Hide()
         end
 
         if healthBar then
             blizzOverlay = healthBar[key]
-            if blizzOverlay and not blizzOverlay:IsForbidden() then
+            if blizzOverlay and not IsFrameForbidden(blizzOverlay) then
                 blizzOverlay:Hide()
             end
         end
@@ -759,25 +1129,39 @@ local function GetOvershieldAmount(unit, curHealth, maxHealth)
 end
 
 local function EnsureCustomTextures(frame, healthBar)
+    local parent = GetOverlayParentFrame(frame, healthBar)
+
     if not frame.ShieldFramesOverlay then
-        local tint = healthBar:CreateTexture(nil, "OVERLAY", nil, 5)
+        local tint = parent:CreateTexture(nil, "OVERLAY", nil, 5)
         tint:SetTexture("Interface\\Buttons\\WHITE8X8")
         tint:Hide()
 
-        local overlay = healthBar:CreateTexture(nil, "OVERLAY", nil, 6)
+        local overlay = parent:CreateTexture(nil, "OVERLAY", nil, 6)
         overlay:SetTexture("Interface\\RaidFrame\\Shield-Overlay", true, true)
         overlay.tileSize = OVERLAY_TILE_SIZE
+        overlay:SetDrawLayer("OVERLAY", 6)
         overlay:Hide()
 
-        local glow = healthBar:CreateTexture(nil, "OVERLAY", nil, 7)
+        local glow = parent:CreateTexture(nil, "OVERLAY", nil, 7)
         glow:SetTexture("Interface\\RaidFrame\\Shield-Overshield")
         glow:SetBlendMode("ADD")
         glow:SetWidth(GLOW_TEXTURE_WIDTH)
+        glow:SetDrawLayer("OVERLAY", 7)
         glow:Hide()
 
         frame.ShieldFramesTint = tint
         frame.ShieldFramesOverlay = overlay
         frame.ShieldFramesGlow = glow
+    else
+        if frame.ShieldFramesTint then
+            frame.ShieldFramesTint:SetParent(parent)
+        end
+        if frame.ShieldFramesOverlay then
+            frame.ShieldFramesOverlay:SetParent(parent)
+        end
+        if frame.ShieldFramesGlow then
+            frame.ShieldFramesGlow:SetParent(parent)
+        end
     end
 
     return frame.ShieldFramesOverlay, frame.ShieldFramesGlow
@@ -793,14 +1177,32 @@ local function HideOvershieldDisplay(frame)
     if frame.ShieldFramesGlow then
         frame.ShieldFramesGlow:Hide()
     end
-    if frame.ShieldFramesOverlayBar and not frame.ShieldFramesOverlayBar:IsForbidden() then
+    if frame.ShieldFramesOverlayBar and not IsFrameForbidden(frame.ShieldFramesOverlayBar) then
         frame.ShieldFramesOverlayBar:Hide()
     end
-    if frame.ShieldFramesOverlayClip and not frame.ShieldFramesOverlayClip:IsForbidden() then
+    if frame.ShieldFramesOverlayClip and not IsFrameForbidden(frame.ShieldFramesOverlayClip) then
         frame.ShieldFramesOverlayClip:Hide()
     end
     RestoreBlizzOvershieldGlow(frame, frame.overAbsorbGlow)
     RestoreBlizzAbsorbBars(frame, frame.healthbar or frame.healthBar)
+    frame.ShieldFramesLastApplyPath = nil
+    frame.ShieldFramesLastBootstrapMode = nil
+    frame.ShieldFramesLastRenderMaxHealth = nil
+end
+
+local function ClearFrameOvershieldState(frame)
+    if not frame then
+        return
+    end
+    SetFrameOvershieldActive(frame, false)
+    frame.ShieldFramesKnownAbsorbAuraPresent = nil
+    frame.ShieldFramesLastAbsorbEvent = nil
+    frame.ShieldFramesLastAbsorbAmount = nil
+    frame.ShieldFramesPendingAbsorbEstimate = nil
+    frame.ShieldFramesLastOverlayWidth = nil
+    frame.ShieldFramesCachedBarWidth = nil
+    HideOvershieldDisplay(frame)
+    frame.ShieldFramesLastApplyResult = false
 end
 
 local function EnsureOvershieldBar(frame, healthBar)
@@ -884,6 +1286,84 @@ local function ApplyTiledOverlayTexture(overlay, fill, healthBar, tileSize)
     overlay:SetTexCoord(left, right, top, bottom)
 end
 
+local function ApplyOverlayAndGlow(frame, healthBar, overlay, glow, overlayWidth, tileSize, fillAnchor, fillAnchorMode)
+    if not overlay or IsFrameForbidden(overlay) then
+        return false
+    end
+
+    if fillAnchor then
+        overlayWidth = nil
+    else
+        overlayWidth = SafeNumber(overlayWidth)
+        if not overlayWidth or overlayWidth <= 0 then
+            return false
+        end
+    end
+
+    local parentFrame = GetOverlayParentFrame(frame, healthBar)
+    local anchorFrame = GetOverlayAnchorFrame(frame, healthBar)
+    local settings = GetOverlaySettings()
+    tileSize = tileSize or overlay.tileSize or OVERLAY_TILE_SIZE
+    local tintColor = GetOverlayTintColor(settings)
+    local tint = frame and frame.ShieldFramesTint
+    local anchorLeft = fillAnchorMode == "missingHealth" and "TOPRIGHT" or "TOPLEFT"
+    local anchorLeftBottom = fillAnchorMode == "missingHealth" and "BOTTOMRIGHT" or "BOTTOMLEFT"
+
+    if tint and not IsFrameForbidden(tint) then
+        tint:SetParent(parentFrame)
+        tint:ClearAllPoints()
+        tint:SetPoint("TOPRIGHT", anchorFrame, "TOPRIGHT", 0, 0)
+        tint:SetPoint("BOTTOMRIGHT", anchorFrame, "BOTTOMRIGHT", 0, 0)
+        if fillAnchor then
+            tint:SetPoint("TOPLEFT", fillAnchor, anchorLeft, 0, 0)
+            tint:SetPoint("BOTTOMLEFT", fillAnchor, anchorLeftBottom, 0, 0)
+        else
+            tint:SetWidth(overlayWidth)
+        end
+        tint:SetTexture("Interface\\Buttons\\WHITE8X8")
+        tint:SetVertexColor(
+            tintColor.r or 1,
+            tintColor.g or 1,
+            tintColor.b or 1,
+            settings.overlayAlpha
+        )
+        tint:Show()
+    end
+
+    overlay:SetParent(parentFrame)
+    overlay:ClearAllPoints()
+    overlay:SetPoint("TOPRIGHT", anchorFrame, "TOPRIGHT", 0, 0)
+    overlay:SetPoint("BOTTOMRIGHT", anchorFrame, "BOTTOMRIGHT", 0, 0)
+    if fillAnchor then
+        overlay:SetPoint("TOPLEFT", fillAnchor, anchorLeft, 0, 0)
+        overlay:SetPoint("BOTTOMLEFT", fillAnchor, anchorLeftBottom, 0, 0)
+        ApplyTiledOverlayTexture(overlay, fillAnchor, anchorFrame, tileSize)
+    else
+        overlay:SetWidth(overlayWidth)
+        overlay:SetTexCoord(0, overlayWidth / tileSize, 0, OVERLAY_TILE_SIZE / tileSize)
+    end
+    overlay:SetTexture("Interface\\RaidFrame\\Shield-Overlay", true, true)
+    overlay:SetBlendMode("BLEND")
+    overlay:SetVertexColor(tintColor.r or 1, tintColor.g or 1, tintColor.b or 1, settings.overlayAlpha)
+    overlay:Show()
+
+    if glow and not IsFrameForbidden(glow) and settings.showGlow then
+        glow:SetParent(parentFrame)
+        local color = settings.glowColor
+        glow:SetDrawLayer("OVERLAY", 7)
+        glow:SetBlendMode("ADD")
+        glow:ClearAllPoints()
+        glow:SetPoint("TOPLEFT", overlay, "TOPLEFT", GLOW_EDGE_OFFSET, 0)
+        glow:SetPoint("BOTTOMLEFT", overlay, "BOTTOMLEFT", GLOW_EDGE_OFFSET, 0)
+        glow:SetVertexColor(color.r or 1, color.g or 1, color.b or 1, settings.glowAlpha)
+        glow:Show()
+    elseif glow and not IsFrameForbidden(glow) then
+        glow:Hide()
+    end
+
+    return true
+end
+
 local function AnchorOverlayToFill(overlay, healthBar, fill, parent)
     overlay:SetParent(parent or healthBar)
     overlay:ClearAllPoints()
@@ -901,15 +1381,45 @@ local function AnchorOverlayToHealthBarWidth(overlay, healthBar, overlayWidth, p
     overlay:SetWidth(overlayWidth)
 end
 
-local function ComputeAbsorbOverlayWidth(healthBar, absorbAmount, maxHealth)
-    if not healthBar or not absorbAmount or not maxHealth then
+local function GetOwnedOverlayBarWidth(frame, healthBar)
+    local bar = frame and frame.ShieldFramesOverlayBar
+    if bar and not IsFrameForbidden(bar) then
+        local width = SafeNumber(bar:GetWidth())
+        if width and width > 0 then
+            frame.ShieldFramesCachedBarWidth = width
+            return width
+        end
+    end
+
+    local cached = frame and SafeNumber(frame.ShieldFramesCachedBarWidth)
+    if cached and cached > 0 then
+        return cached
+    end
+
+    -- Own clip is sized to the health bar; safe to measure (not Blizzard healthBar:GetWidth).
+    local clip = frame and frame.ShieldFramesOverlayClip
+    if clip and not IsFrameForbidden(clip) then
+        local width = SafeNumber(clip:GetWidth())
+        if width and width > 0 then
+            if frame then
+                frame.ShieldFramesCachedBarWidth = width
+            end
+            return width
+        end
+    end
+
+    return nil
+end
+
+local function ComputeAbsorbOverlayWidth(frame, healthBar, absorbAmount, maxHealth)
+    if not absorbAmount or not maxHealth then
         return nil
     end
     if not CanAccessValue(absorbAmount) or not CanAccessValue(maxHealth) or maxHealth <= 0 then
         return nil
     end
 
-    local barWidth = SafeNumber(healthBar:GetWidth())
+    local barWidth = GetOwnedOverlayBarWidth(frame, healthBar)
     if not barWidth or barWidth <= 0 then
         return nil
     end
@@ -944,21 +1454,28 @@ local function ApplyStripePatternOverlay(frame, healthBar, fill, parent, setting
     end
 
     local tint = GetOverlayTintColor(settings)
+    local sizingAbsorb = absorbAmount
+    if (not sizingAbsorb or not CanAccessValue(sizingAbsorb)) and frame and frame.ShieldFramesLastAbsorbAmount then
+        sizingAbsorb = frame.ShieldFramesLastAbsorbAmount
+    end
+    local overlayWidth = ComputeAbsorbOverlayWidth(frame, healthBar, sizingAbsorb, maxHealth)
     local fillWidth = fill and SafeNumber(fill:GetWidth())
-    local overlayWidth = ComputeAbsorbOverlayWidth(healthBar, absorbAmount, maxHealth)
 
     overlay:SetTexture("Interface\\RaidFrame\\Shield-Overlay", true, true)
     if fillWidth and fillWidth > 0 then
+        -- Readable fill: lock stripe to the reverse-fill so glow/stripe cannot drift apart.
         AnchorOverlayToFill(overlay, healthBar, fill, parent)
         ApplyTiledOverlayTexture(overlay, fill, healthBar, OVERLAY_TILE_SIZE)
     elseif overlayWidth and overlayWidth > 0 then
+        -- Combat secret fill width: size from absorb/max so the stripe still tracks.
         AnchorOverlayToHealthBarWidth(overlay, healthBar, overlayWidth, parent)
         local totalHeight = SafeOverlayHeight(healthBar)
         overlay:SetHorizTile(true)
         overlay:SetVertTile(true)
         overlay:SetTexCoord(0, overlayWidth / OVERLAY_TILE_SIZE, 0, totalHeight / OVERLAY_TILE_SIZE)
     else
-        return
+        AnchorOverlayToFill(overlay, healthBar, fill, parent)
+        ApplyTiledOverlayTexture(overlay, fill, healthBar, OVERLAY_TILE_SIZE)
     end
     overlay:SetBlendMode("BLEND")
     overlay:SetVertexColor(tint.r or 1, tint.g or 1, tint.b or 1, settings.overlayAlpha)
@@ -997,15 +1514,33 @@ local function ApplyOvershieldBar(frame, healthBar, absorbAmount, maxHealth, ove
     local tintColor = GetOverlayTintColor(settings)
     local unit = frame.unit or frame.displayedUnit
 
+    -- Prefer a readable value for SetValue so the bar tracks in combat; secret SetValue stalls visually.
+    local barAbsorb = absorbAmount
+    if not CanAccessValue(barAbsorb) and frame.ShieldFramesLastAbsorbAmount and frame.ShieldFramesLastAbsorbAmount > 0 then
+        barAbsorb = frame.ShieldFramesLastAbsorbAmount
+    end
+    local barMax = maxHealth
+    if not CanAccessValue(barMax) then
+        local _, fallbackMax = GetUnitHealthValues(frame, unit)
+        if fallbackMax and CanAccessValue(fallbackMax) then
+            barMax = fallbackMax
+        end
+    end
+
     AnchorOvershieldClip(clip, healthBar, healthFill, overshieldAmount, unit, frame)
 
     bar:ClearAllPoints()
     bar:SetPoint("TOPLEFT", healthBar, "TOPLEFT", 0, 0)
     bar:SetPoint("BOTTOMRIGHT", healthBar, "BOTTOMRIGHT", 0, 0)
     bar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
-    bar:SetMinMaxValues(0, maxHealth)
+    if CanAccessValue(barMax) then
+        bar:SetMinMaxValues(0, barMax)
+    else
+        bar:SetMinMaxValues(0, maxHealth)
+        barMax = maxHealth
+    end
     bar:SetReverseFill(true)
-    bar:SetValue(absorbAmount)
+    bar:SetValue(barAbsorb)
     bar:SetStatusBarColor(
         tintColor.r or 1,
         tintColor.g or 1,
@@ -1026,26 +1561,34 @@ local function ApplyOvershieldBar(frame, healthBar, absorbAmount, maxHealth, ove
         return false
     end
 
-    ApplyStripePatternOverlay(frame, healthBar, fill, bar, settings, absorbAmount, maxHealth)
+    ApplyStripePatternOverlay(frame, healthBar, fill, bar, settings, barAbsorb, barMax)
 
-    if glow and not glow:IsForbidden() and settings.showGlow and ShouldShowOvershieldGlow(frame, overshieldAmount, fill) then
+    local fillWidth = fill and SafeNumber(fill:GetWidth())
+    local overlayWidth = ComputeAbsorbOverlayWidth(frame, healthBar, barAbsorb, barMax)
+    local knownWidth = (overlayWidth and overlayWidth > 0 and overlayWidth)
+        or (fillWidth and fillWidth > 0 and fillWidth)
+    -- Only suppress glow when width is known to be tiny.
+    local canShowGlow = not (knownWidth and knownWidth > 0 and knownWidth < 8)
+    local stripe = overlay
+
+    if glow and not glow:IsForbidden() and settings.showGlow and canShowGlow and ShouldShowOvershieldGlow(frame, overshieldAmount, fill) then
         local color = settings.glowColor
         glow:SetParent(clip)
         glow:SetDrawLayer("OVERLAY", 7)
         glow:ClearAllPoints()
-        local fillWidth = fill and SafeNumber(fill:GetWidth())
-        if fillWidth and fillWidth > 0 then
+        -- Always pin to the stripe's left edge so leave-combat / readable-absorb updates cannot drift the glow into the health fill.
+        if stripe and not IsFrameForbidden(stripe) and stripe:IsShown() then
+            glow:SetPoint("TOPLEFT", stripe, "TOPLEFT", GLOW_EDGE_OFFSET, 0)
+            glow:SetPoint("BOTTOMLEFT", stripe, "BOTTOMLEFT", GLOW_EDGE_OFFSET, 0)
+        elseif fillWidth and fillWidth > 0 then
             glow:SetPoint("TOPLEFT", fill, "TOPLEFT", GLOW_EDGE_OFFSET, 0)
             glow:SetPoint("BOTTOMLEFT", fill, "BOTTOMLEFT", GLOW_EDGE_OFFSET, 0)
+        elseif overlayWidth and overlayWidth > 0 then
+            glow:SetPoint("TOPLEFT", healthBar, "TOPRIGHT", -overlayWidth + GLOW_EDGE_OFFSET, 0)
+            glow:SetPoint("BOTTOMLEFT", healthBar, "BOTTOMRIGHT", -overlayWidth + GLOW_EDGE_OFFSET, 0)
         else
-            local overlayWidth = ComputeAbsorbOverlayWidth(healthBar, absorbAmount, maxHealth)
-            if overlayWidth and overlayWidth > 0 then
-                glow:SetPoint("TOPRIGHT", healthBar, "TOPRIGHT", -overlayWidth + GLOW_EDGE_OFFSET, 0)
-                glow:SetPoint("BOTTOMRIGHT", healthBar, "BOTTOMRIGHT", -overlayWidth + GLOW_EDGE_OFFSET, 0)
-            else
-                glow:SetPoint("TOPLEFT", fill, "TOPLEFT", GLOW_EDGE_OFFSET, 0)
-                glow:SetPoint("BOTTOMLEFT", fill, "BOTTOMLEFT", GLOW_EDGE_OFFSET, 0)
-            end
+            glow:SetPoint("TOPLEFT", fill, "TOPLEFT", GLOW_EDGE_OFFSET, 0)
+            glow:SetPoint("BOTTOMLEFT", fill, "BOTTOMLEFT", GLOW_EDGE_OFFSET, 0)
         end
         glow:SetBlendMode("ADD")
         glow:SetVertexColor(color.r or 1, color.g or 1, color.b or 1, settings.glowAlpha)
@@ -1057,89 +1600,194 @@ local function ApplyOvershieldBar(frame, healthBar, absorbAmount, maxHealth, ove
     return true
 end
 
-local function ApplyOverlayAndGlow(frame, healthBar, overlay, glow, overlayWidth, tileSize, fillAnchor)
-    overlayWidth = SafeNumber(overlayWidth)
-    if not overlay or overlay:IsForbidden() or not overlayWidth or overlayWidth <= 0 then
+local DEFAULT_BOOTSTRAP_OVERLAY_WIDTH = 48
+
+local MIDNIGHT_UNIT_FRAME_UNITS = {
+    player = true,
+    target = true,
+    focus = true,
+}
+
+local function IsMidnightUnitFrame(frame)
+    return frame and frame.unit and MIDNIGHT_UNIT_FRAME_UNITS[frame.unit] == true
+end
+
+local function ClearUnsupportedUnitFrame(frame)
+    if not frame then
+        return
+    end
+    if frame.ShieldFramesOvershieldActive or frame.ShieldFramesOverlay or frame.ShieldFramesOverlayBar then
+        SetFrameOvershieldActive(frame, false)
+        HideOvershieldDisplay(frame)
+    end
+end
+
+local function SafeHealthBarWidth(frame)
+    if not frame then
+        return nil
+    end
+    return SafeNumber(frame.ShieldFramesCachedBarWidth)
+end
+
+local function ComputeBootstrapOverlayWidth(frame)
+    local cached = frame and SafeNumber(frame.ShieldFramesLastOverlayWidth)
+    if cached and cached > 0 then
+        return cached
+    end
+    return DEFAULT_BOOTSTRAP_OVERLAY_WIDTH
+end
+
+local function GetHealthBarFill(healthBar)
+    if not healthBar or IsFrameForbidden(healthBar) then
+        return nil
+    end
+
+    local ok, fill = pcall(function()
+        return healthBar:GetStatusBarTexture()
+    end)
+    if not ok or not fill or IsFrameForbidden(fill) then
+        return nil
+    end
+
+    return fill
+end
+
+local function CanUseFillAnchor(frame, unit)
+    local curHealth, maxHealth = GetUnitHealthValues(frame, unit)
+    if curHealth and maxHealth and CanAccessValue(curHealth) and CanAccessValue(maxHealth) then
+        return curHealth < maxHealth
+    end
+    return false
+end
+
+local function ApplyOvershieldBootstrapOverlay(frame, healthBar, maxHealth, overshieldAmount, unit)
+    if frame.ShieldFramesOverlayBar and not IsFrameForbidden(frame.ShieldFramesOverlayBar) then
+        frame.ShieldFramesOverlayBar:Hide()
+    end
+    if frame.ShieldFramesOverlayClip and not IsFrameForbidden(frame.ShieldFramesOverlayClip) then
+        frame.ShieldFramesOverlayClip:Hide()
+    end
+
+    local overlay, glow = EnsureCustomTextures(frame, healthBar)
+    local healthFill = GetHealthBarFill(healthBar)
+
+    if FrameHasBlizzOvershieldGlow(frame) then
+        frame.ShieldFramesLastBootstrapMode = "glow-width"
+        local overlayWidth = ComputeBootstrapOverlayWidth(frame)
+        if ApplyOverlayAndGlow(frame, healthBar, overlay, glow, overlayWidth, 32) then
+            frame.ShieldFramesLastOverlayWidth = overlayWidth
+            frame.ShieldFramesCachedBarWidth = overlayWidth
+            return true
+        end
+    end
+
+    if healthFill and CanUseFillAnchor(frame, unit) then
+        frame.ShieldFramesLastBootstrapMode = "fill-anchor"
+        if ApplyOverlayAndGlow(frame, healthBar, overlay, glow, nil, 32, healthFill, "missingHealth") then
+            frame.ShieldFramesLastOverlayWidth = nil
+            return true
+        end
+    end
+
+    frame.ShieldFramesLastBootstrapMode = nil
+    return false
+end
+
+local function CanRenderAbsorbOnStatusBar(renderAbsorb)
+    return renderAbsorb ~= nil and (CanAccessValue(renderAbsorb) or IsSecret(renderAbsorb))
+end
+
+local function CanRenderMaxOnStatusBar(maxHealth)
+    return maxHealth ~= nil and (CanAccessValue(maxHealth) or IsSecret(maxHealth))
+end
+
+local function ApplyMidnightOvershieldDisplay(frame, healthBar, renderAbsorb, renderMaxHealth, overshieldAmount, unit)
+    local inCombat = unit and UnitAffectingCombat(unit)
+    -- Prefer last readable absorb over a secret calculator value so combat sizing can update.
+    local displayAbsorb = renderAbsorb
+    if (not displayAbsorb or not CanAccessValue(displayAbsorb))
+        and frame.ShieldFramesLastAbsorbAmount
+        and frame.ShieldFramesLastAbsorbAmount > 0
+        and (inCombat or KnownAbsorbAuraEvidenceActive(frame, unit))
+    then
+        displayAbsorb = frame.ShieldFramesLastAbsorbAmount
+    end
+
+    if CanRenderAbsorbOnStatusBar(displayAbsorb) or CanRenderAbsorbOnStatusBar(renderAbsorb) then
+        local max = renderMaxHealth
+        if not CanRenderMaxOnStatusBar(max) then
+            local _, fallbackMax = GetUnitHealthValues(frame, unit)
+            if CanRenderMaxOnStatusBar(fallbackMax) then
+                max = fallbackMax
+            end
+        end
+        if CanRenderMaxOnStatusBar(max) then
+            local absorbForBar = CanAccessValue(displayAbsorb) and displayAbsorb or renderAbsorb
+            local absorbReadable = CanAccessValue(absorbForBar)
+            local maxReadable = CanAccessValue(max)
+            -- Out of combat, secret status-bar values create a stuck tiny stripe/glow at the bar tip.
+            local allowSecretBar = inCombat and (absorbReadable or maxReadable or IsSecret(absorbForBar))
+            if (absorbReadable and maxReadable) or allowSecretBar then
+                if absorbReadable and maxReadable then
+                    frame.ShieldFramesLastApplyPath = CanAccessValue(renderAbsorb) and "status-bar" or "status-bar-cached"
+                elseif absorbReadable then
+                    frame.ShieldFramesLastApplyPath = "status-bar-secret-max"
+                elseif maxReadable then
+                    frame.ShieldFramesLastApplyPath = "status-bar-secret-absorb"
+                else
+                    frame.ShieldFramesLastApplyPath = "status-bar-secret"
+                end
+                if ApplyOvershieldBar(frame, healthBar, absorbForBar, max, overshieldAmount) then
+                    return true
+                end
+            end
+        end
+    end
+
+    if not inCombat then
+        -- Out of combat: only bootstrap when Blizzard still shows a live overshield glow.
+        if not FrameHasBlizzOvershieldGlow(frame) then
+            frame.ShieldFramesLastApplyPath = "skipped-ooc"
+            return false
+        end
+    end
+
+    frame.ShieldFramesLastApplyPath = "bootstrap"
+    return ApplyOvershieldBootstrapOverlay(frame, healthBar, renderMaxHealth, overshieldAmount, unit)
+end
+
+local function ShouldKeepPreviousOverlay(frame, unit, totalAbsorb, overshieldAmount, absorbAmount)
+    if HasClearNoAbsorbSignal(frame, unit, totalAbsorb, overshieldAmount) then
         return false
     end
 
-    local settings = GetOverlaySettings()
-    tileSize = tileSize or overlay.tileSize or OVERLAY_TILE_SIZE
-    local tintColor = GetOverlayTintColor(settings)
-    local tint = frame and frame.ShieldFramesTint
-
-    if tint and not tint:IsForbidden() then
-        tint:SetParent(healthBar)
-        tint:ClearAllPoints()
-        tint:SetPoint("TOPRIGHT", healthBar, "TOPRIGHT", 0, 0)
-        tint:SetPoint("BOTTOMRIGHT", healthBar, "BOTTOMRIGHT", 0, 0)
-        if fillAnchor then
-            tint:SetPoint("TOPLEFT", fillAnchor, "TOPLEFT", 0, 0)
-            tint:SetPoint("BOTTOMLEFT", fillAnchor, "BOTTOMLEFT", 0, 0)
-        else
-            tint:SetWidth(overlayWidth)
-        end
-        tint:SetTexture("Interface\\Buttons\\WHITE8X8")
-        tint:SetVertexColor(
-            tintColor.r or 1,
-            tintColor.g or 1,
-            tintColor.b or 1,
-            settings.overlayAlpha
-        )
-        tint:Show()
+    if absorbAmount ~= nil and CanAccessValue(absorbAmount) and absorbAmount <= 0 then
+        return false
     end
 
-    overlay:SetParent(healthBar)
-    overlay:ClearAllPoints()
-    overlay:SetPoint("TOPRIGHT", healthBar, "TOPRIGHT", 0, 0)
-    overlay:SetPoint("BOTTOMRIGHT", healthBar, "BOTTOMRIGHT", 0, 0)
-    if fillAnchor then
-        overlay:SetPoint("TOPLEFT", fillAnchor, "TOPLEFT", 0, 0)
-        overlay:SetPoint("BOTTOMLEFT", fillAnchor, "BOTTOMLEFT", 0, 0)
-        ApplyTiledOverlayTexture(overlay, fillAnchor, healthBar, tileSize)
-    else
-        overlay:SetWidth(overlayWidth)
-        local totalHeight = SafeOverlayHeight(healthBar)
-        overlay:SetTexCoord(0, overlayWidth / tileSize, 0, totalHeight / tileSize)
-    end
-    overlay:SetTexture("Interface\\RaidFrame\\Shield-Overlay", true, true)
-    overlay:SetBlendMode("BLEND")
-    overlay:SetVertexColor(tintColor.r or 1, tintColor.g or 1, tintColor.b or 1, settings.overlayAlpha)
-    overlay:Show()
-
-    if glow and not glow:IsForbidden() and settings.showGlow then
-        local color = settings.glowColor
-        glow:SetDrawLayer("OVERLAY", 7)
-        glow:SetBlendMode("ADD")
-        glow:ClearAllPoints()
-        glow:SetPoint("TOPLEFT", overlay, "TOPLEFT", GLOW_EDGE_OFFSET, 0)
-        glow:SetPoint("BOTTOMLEFT", overlay, "BOTTOMLEFT", GLOW_EDGE_OFFSET, 0)
-        glow:SetVertexColor(color.r or 1, color.g or 1, color.b or 1, settings.glowAlpha)
-        glow:Show()
-    elseif glow and not glow:IsForbidden() then
-        glow:Hide()
+    if unit and KnownAbsorbAuraIsDepleted(unit) then
+        return false
     end
 
-    return true
+    return frame.ShieldFramesOvershieldActive
+        and FrameShowsCustomOverlay(frame)
+        and HasActiveAbsorbEvidence(frame, unit, totalAbsorb, overshieldAmount)
 end
 
 local function UpdateMidnightOvershield(frame, healthBar, unit)
-    if not frame or frame.ShieldFramesUpdateLock then
+    if not frame then
+        return
+    end
+    if frame.ShieldFramesUpdateLock then
+        frame.ShieldFramesLastUpdateSkipReason = "locked"
         return
     end
     frame.ShieldFramesUpdateLock = true
+    frame.ShieldFramesLastUpdateSkipReason = nil
+    frame.ShieldFramesLastUpdateError = nil
 
-    frame.ShieldFramesPendingAbsorbEstimate = nil
-    if healthBar and not frame.ShieldFramesBlizzAbsorbHidden then
-        local _, pendingMaxHealth = GetUnitHealthValues(frame, unit)
-        if pendingMaxHealth and CanAccessValue(pendingMaxHealth) then
-            local estimated = EstimateAbsorbFromBarWidth(frame, healthBar, pendingMaxHealth)
-            if estimated and estimated > 0 then
-                frame.ShieldFramesPendingAbsorbEstimate = estimated
-            end
-        end
-    end
-
+    local ok, err = pcall(function()
+    RefreshKnownAbsorbAuraState(frame, unit)
     local blizzGlow = frame.overAbsorbGlow
     local totalAbsorb, overshieldAmount, maxHealth = GetCalculatorAbsorbValues(unit)
 
@@ -1147,8 +1795,10 @@ local function UpdateMidnightOvershield(frame, healthBar, unit)
         SetFrameOvershieldActive(frame, false)
         frame.ShieldFramesLastAbsorbAmount = nil
         frame.ShieldFramesPendingAbsorbEstimate = nil
+        frame.ShieldFramesLastOverlayWidth = nil
         HideOvershieldDisplay(frame)
-        frame.ShieldFramesUpdateLock = nil
+        frame.ShieldFramesLastApplyResult = false
+        frame.ShieldFramesLastUpdateSkipReason = "clear-no-absorb"
         return
     end
 
@@ -1156,57 +1806,91 @@ local function UpdateMidnightOvershield(frame, healthBar, unit)
         SetFrameOvershieldActive(frame, false)
         frame.ShieldFramesLastAbsorbAmount = nil
         frame.ShieldFramesPendingAbsorbEstimate = nil
+        frame.ShieldFramesLastOverlayWidth = nil
         HideOvershieldDisplay(frame)
-        frame.ShieldFramesUpdateLock = nil
+        frame.ShieldFramesLastApplyResult = false
+        frame.ShieldFramesLastUpdateSkipReason = "no-midnight-absorb"
         return
     end
 
-    local absorbAmount, renderMaxHealth = ResolveMidnightRenderValues(frame, unit, totalAbsorb, maxHealth, healthBar)
-    local keepPrevious = frame.ShieldFramesOvershieldActive
-        and frame.ShieldFramesOverlayBar
-        and not frame.ShieldFramesOverlayBar:IsForbidden()
-        and frame.ShieldFramesOverlayBar:IsShown()
-        and not HasClearNoAbsorbSignal(frame, unit, totalAbsorb, overshieldAmount)
+    frame.ShieldFramesPendingAbsorbEstimate = nil
+    local absorbAmount, renderMaxHealth, secretAbsorb = ResolveMidnightRenderValues(frame, unit, totalAbsorb, maxHealth, healthBar)
+    local renderAbsorb = PickMidnightRenderAbsorb(absorbAmount, secretAbsorb)
+    local hasRenderAbsorb = HasMidnightRenderAbsorb(absorbAmount, secretAbsorb)
+    local hasVisualSignal = FrameHasOvershieldVisualSignal(frame)
 
-    if absorbAmount == nil or renderMaxHealth == nil then
-        if keepPrevious then
-            frame.ShieldFramesUpdateLock = nil
-            return
-        end
+    if not hasRenderAbsorb and not hasVisualSignal then
         SetFrameOvershieldActive(frame, false)
         HideOvershieldDisplay(frame)
-        frame.ShieldFramesUpdateLock = nil
+        frame.ShieldFramesLastApplyResult = false
+        frame.ShieldFramesLastUpdateSkipReason = "no-render-absorb"
         return
     end
 
-    if not CanAccessValue(absorbAmount) or not CanAccessValue(renderMaxHealth) then
-        if keepPrevious then
-            frame.ShieldFramesUpdateLock = nil
+    if not CanRenderMaxOnStatusBar(renderMaxHealth) then
+        local _, fallbackMax = GetUnitHealthValues(frame, unit)
+        if CanRenderMaxOnStatusBar(fallbackMax) then
+            renderMaxHealth = fallbackMax
+        end
+    end
+    frame.ShieldFramesLastRenderMaxHealth = renderMaxHealth
+
+    local absorbReadable = renderAbsorb ~= nil and CanAccessValue(renderAbsorb)
+    if absorbReadable then
+        if SafeLessOrEqual(renderAbsorb, 0) == true then
+            SetFrameOvershieldActive(frame, false)
+            HideOvershieldDisplay(frame)
+            frame.ShieldFramesLastApplyResult = false
+            frame.ShieldFramesLastUpdateSkipReason = "readable-absorb-zero"
             return
         end
-        frame.ShieldFramesUpdateLock = nil
-        return
-    end
-
-    if SafeLessOrEqual(absorbAmount, 0) == true or SafeLessOrEqual(renderMaxHealth, 0) == true then
-        SetFrameOvershieldActive(frame, false)
-        HideOvershieldDisplay(frame)
-        frame.ShieldFramesUpdateLock = nil
-        return
+        if renderMaxHealth and CanAccessValue(renderMaxHealth) and SafeLessOrEqual(renderMaxHealth, 0) == true then
+            SetFrameOvershieldActive(frame, false)
+            HideOvershieldDisplay(frame)
+            frame.ShieldFramesLastApplyResult = false
+            frame.ShieldFramesLastUpdateSkipReason = "readable-max-health-zero"
+            return
+        end
     end
 
     SetFrameOvershieldActive(frame, true)
-    local applied = ApplyOvershieldBar(frame, healthBar, absorbAmount, renderMaxHealth, overshieldAmount)
+    local applied = ApplyMidnightOvershieldDisplay(
+        frame,
+        healthBar,
+        renderAbsorb,
+        renderMaxHealth,
+        overshieldAmount,
+        unit
+    )
 
     if applied then
-        frame.ShieldFramesLastAbsorbAmount = absorbAmount
+        if absorbReadable then
+            frame.ShieldFramesLastAbsorbAmount = renderAbsorb
+        elseif frame.ShieldFramesLastAbsorbAmount == nil then
+            local fromAura = unit and GetAbsorbFromKnownAura(unit)
+            if fromAura and fromAura > 0 then
+                frame.ShieldFramesLastAbsorbAmount = fromAura
+            end
+        end
+        GetOwnedOverlayBarWidth(frame, healthBar)
         SuppressBlizzAbsorbOverlays(frame, healthBar)
         if blizzGlow then
             HideBlizzOvershieldGlow(frame, blizzGlow)
         end
-    elseif not applied then
+    else
         SetFrameOvershieldActive(frame, false)
         HideOvershieldDisplay(frame)
+        frame.ShieldFramesLastUpdateSkipReason = "apply-failed"
+    end
+    frame.ShieldFramesLastApplyResult = applied
+    end)
+
+    if not ok then
+        frame.ShieldFramesLastUpdateError = err
+        frame.ShieldFramesLastApplyResult = false
+        frame.ShieldFramesLastUpdateSkipReason = "error"
+    elseif frame.ShieldFramesLastApplyResult == nil then
+        frame.ShieldFramesLastUpdateSkipReason = frame.ShieldFramesLastUpdateSkipReason or "early-exit"
     end
 
     frame.ShieldFramesUpdateLock = nil
@@ -1341,13 +2025,22 @@ local function UpdateUnitFrame(frame)
         return
     end
 
+    if UsesHealPredictionCalculator() and not IsMidnightUnitFrame(frame) then
+        ClearUnsupportedUnitFrame(frame)
+        return
+    end
+
     local healthBar = frame.healthbar or frame.healthBar
-    if not healthBar or healthBar:IsForbidden() then
+    if not healthBar then
         return
     end
 
     if UsesHealPredictionCalculator() then
         UpdateMidnightOvershield(frame, healthBar, frame.unit)
+        return
+    end
+
+    if IsFrameForbidden(healthBar) then
         return
     end
 
@@ -1397,6 +2090,41 @@ end
 
 local function SafeUpdateUnitFrame(frame)
     pcall(UpdateUnitFrame, frame)
+end
+
+local pendingUnitFrameUpdates = {}
+local pendingCompactFrameUpdates = {}
+
+local function DeferUnitFrameUpdate(frame)
+    if not frame then
+        return
+    end
+    if not IsMidnightUnitFrame(frame) then
+        ClearUnsupportedUnitFrame(frame)
+        return
+    end
+    if pendingUnitFrameUpdates[frame] then
+        return
+    end
+    pendingUnitFrameUpdates[frame] = true
+    C_Timer.After(0, function()
+        pendingUnitFrameUpdates[frame] = nil
+        SafeUpdateUnitFrame(frame)
+    end)
+end
+
+local function DeferCompactFrameUpdate(frame)
+    if not frame then
+        return
+    end
+    if pendingCompactFrameUpdates[frame] then
+        return
+    end
+    pendingCompactFrameUpdates[frame] = true
+    C_Timer.After(0, function()
+        pendingCompactFrameUpdates[frame] = nil
+        SafeUpdateCompactFrame(frame)
+    end)
 end
 
 local function ForEachCompactFrame(callback)
@@ -1462,7 +2190,7 @@ local function RefreshUnitFrameByUnit(unit)
         SafeUpdateUnitFrame(FocusFrame)
     end
     if PetFrame and PetFrame.unit == unit then
-        SafeUpdateUnitFrame(PetFrame)
+        ClearUnsupportedUnitFrame(PetFrame)
     end
 
     ForEachCompactFrame(function(memberFrame)
@@ -1488,21 +2216,23 @@ function ns.RestoreAllBlizzGlowFadeStates()
 end
 
 function ns.RefreshAllFrames()
-    if PlayerFrame then
-        SafeUpdateUnitFrame(PlayerFrame)
-    end
-    if TargetFrame then
-        SafeUpdateUnitFrame(TargetFrame)
-    end
-    if FocusFrame then
-        SafeUpdateUnitFrame(FocusFrame)
-    end
-    if PetFrame then
-        SafeUpdateUnitFrame(PetFrame)
-    end
+    C_Timer.After(0, function()
+        if PlayerFrame then
+            SafeUpdateUnitFrame(PlayerFrame)
+        end
+        if TargetFrame then
+            SafeUpdateUnitFrame(TargetFrame)
+        end
+        if FocusFrame then
+            SafeUpdateUnitFrame(FocusFrame)
+        end
+        if PetFrame then
+            ClearUnsupportedUnitFrame(PetFrame)
+        end
 
-    ForEachCompactFrame(function(memberFrame)
-        SafeUpdateCompactFrame(memberFrame)
+        ForEachCompactFrame(function(memberFrame)
+            SafeUpdateCompactFrame(memberFrame)
+        end)
     end)
 end
 
@@ -1530,9 +2260,9 @@ local function PrintDebugInfo()
             local playerFrame = PlayerFrame
             local playerHealthBar = playerFrame and (playerFrame.healthbar or playerFrame.healthBar)
             local totalAbsorb, overshieldAmount, maxHealth = GetCalculatorAbsorbValues(unit)
-            local absorbAmount, renderMaxHealth
+            local absorbAmount, renderMaxHealth, secretAbsorb
             if playerFrame and playerHealthBar then
-                absorbAmount, renderMaxHealth = ResolveMidnightRenderValues(
+                absorbAmount, renderMaxHealth, secretAbsorb = ResolveMidnightRenderValues(
                     playerFrame,
                     unit,
                     totalAbsorb,
@@ -1540,12 +2270,25 @@ local function PrintDebugInfo()
                     playerHealthBar
                 )
             end
+            local renderAbsorb = PickMidnightRenderAbsorb(absorbAmount, secretAbsorb)
 
             ChatPrint("|cff00ccffShieldFrames|r readable absorb: " .. tostring(UnitHasReadableAbsorb(unit)))
-            ChatPrint("|cff00ccffShieldFrames|r absorb aura active: " .. tostring(UnitHasKnownAbsorbAura(unit)))
-            ChatPrint("|cff00ccffShieldFrames|r readable overshield: " .. tostring(
-                playerFrame and UnitHasReadableOvershield(unit, playerFrame) or "no player frame"
-            ))
+            ChatPrint("|cff00ccffShieldFrames|r absorb aura active: " .. tostring(UnitHasKnownAbsorbCandidate(unit)))
+            ChatPrint("|cff00ccffShieldFrames|r absorb aura depleted: " .. tostring(KnownAbsorbAuraIsDepleted(unit)))
+            local bloodShield = SafeGetAuraBySpellID(unit, 77535)
+            ChatPrint("|cff00ccffShieldFrames|r blood shield aura: " .. tostring(not not bloodShield))
+            if playerFrame then
+                ChatPrint("|cff00ccffShieldFrames|r recent absorb event: " .. tostring(HasRecentAbsorbEvent(playerFrame)))
+            end
+            ChatPrint("|cff00ccffShieldFrames|r player frame found: " .. tostring(not not playerFrame))
+            if playerHealthBar then
+                ChatPrint("|cff00ccffShieldFrames|r health bar forbidden: " .. tostring(IsFrameForbidden(playerHealthBar)))
+            end
+            if playerFrame then
+                ChatPrint("|cff00ccffShieldFrames|r readable overshield: " .. tostring(UnitHasReadableOvershield(unit, playerFrame)))
+            else
+                ChatPrint("|cff00ccffShieldFrames|r readable overshield: unavailable (no player frame)")
+            end
             ChatPrint("|cff00ccffShieldFrames|r blizz absorb bar visible: " .. tostring(
                 playerFrame and FrameShowsAbsorbBar(playerFrame) or false
             ))
@@ -1559,8 +2302,10 @@ local function PrintDebugInfo()
             else
                 ChatPrint("|cff00ccffShieldFrames|r calculator overshield: secret/unavailable")
             end
-            if absorbAmount ~= nil and CanAccessValue(absorbAmount) then
-                ChatPrint("|cff00ccffShieldFrames|r render absorb: " .. tostring(absorbAmount))
+            if renderAbsorb ~= nil and CanAccessValue(renderAbsorb) then
+                ChatPrint("|cff00ccffShieldFrames|r render absorb: " .. tostring(renderAbsorb))
+            elseif secretAbsorb ~= nil then
+                ChatPrint("|cff00ccffShieldFrames|r render absorb: secret (rendering)")
             else
                 ChatPrint("|cff00ccffShieldFrames|r render absorb: secret/unavailable")
             end
@@ -1573,9 +2318,77 @@ local function PrintDebugInfo()
             local glowShown = playerFrame and FrameShowsOvershieldGlow(playerFrame)
             ChatPrint("|cff00ccffShieldFrames|r blizz overAbsorbGlow active: " .. tostring(glowShown))
 
+            if playerFrame and playerHealthBar then
+                local calcTotal, calcOvershield = GetCalculatorAbsorbValues(unit)
+                ChatPrint("|cff00ccffShieldFrames|r midnight has absorb: " .. tostring(
+                    MidnightFrameHasAbsorb(playerFrame, calcOvershield, calcTotal, unit)
+                ))
+                ChatPrint("|cff00ccffShieldFrames|r secret calculator absorb: " .. tostring(
+                    HasSecretAbsorbValue(calcTotal, calcOvershield)
+                ))
+                ChatPrint("|cff00ccffShieldFrames|r overshield active flag: " .. tostring(
+                    not not (playerFrame and playerFrame.ShieldFramesOvershieldActive)
+                ))
+                ChatPrint("|cff00ccffShieldFrames|r raw blizz glow shown: " .. tostring(
+                    playerFrame and FrameHasRawOvershieldGlow(playerFrame) or false
+                ))
+                ChatPrint("|cff00ccffShieldFrames|r clear no absorb signal: " .. tostring(
+                    HasClearNoAbsorbSignal(playerFrame, unit, calcTotal, calcOvershield)
+                ))
+            end
+
+            if playerFrame then
+                playerFrame.ShieldFramesUpdateLock = nil
+                playerFrame.ShieldFramesLastApplyResult = nil
+                playerFrame.ShieldFramesLastUpdateSkipReason = nil
+                playerFrame.ShieldFramesLastUpdateError = nil
+                local updateOk, updateErr = pcall(UpdateMidnightOvershield, playerFrame, playerHealthBar, unit)
+                if not updateOk then
+                    ChatPrint("|cff00ccffShieldFrames|r update error: " .. tostring(updateErr))
+                end
+                if playerFrame.ShieldFramesLastUpdateError then
+                    ChatPrint("|cff00ccffShieldFrames|r update inner error: " .. tostring(playerFrame.ShieldFramesLastUpdateError))
+                end
+                if playerFrame.ShieldFramesLastUpdateSkipReason then
+                    ChatPrint("|cff00ccffShieldFrames|r update skip reason: " .. tostring(playerFrame.ShieldFramesLastUpdateSkipReason))
+                end
+            end
+
+            if playerFrame then
+                if playerFrame.ShieldFramesLastApplyPath == "bootstrap" then
+                    ChatPrint("|cff00ccffShieldFrames|r bootstrap mode: " .. tostring(playerFrame.ShieldFramesLastBootstrapMode or "none"))
+                    if playerFrame.ShieldFramesLastBootstrapMode == "glow-width" or playerFrame.ShieldFramesLastBootstrapMode == "active-width" then
+                        local bootstrapWidth = ComputeBootstrapOverlayWidth(playerFrame)
+                        ChatPrint("|cff00ccffShieldFrames|r bootstrap overlay width: " .. tostring(bootstrapWidth or "nil"))
+                    end
+                end
+            end
+
+            if playerFrame then
+                ChatPrint("|cff00ccffShieldFrames|r last apply result: " .. tostring(playerFrame.ShieldFramesLastApplyResult))
+                ChatPrint("|cff00ccffShieldFrames|r last apply path: " .. tostring(playerFrame.ShieldFramesLastApplyPath or "none"))
+                local effectiveMax = playerFrame.ShieldFramesLastRenderMaxHealth
+                if effectiveMax ~= nil and CanAccessValue(effectiveMax) then
+                    ChatPrint("|cff00ccffShieldFrames|r effective max health: " .. tostring(effectiveMax))
+                elseif effectiveMax ~= nil and IsSecret(effectiveMax) then
+                    ChatPrint("|cff00ccffShieldFrames|r effective max health: secret (rendering)")
+                else
+                    ChatPrint("|cff00ccffShieldFrames|r effective max health: secret/unavailable")
+                end
+                ChatPrint("|cff00ccffShieldFrames|r cached absorb aura: " .. tostring(playerFrame.ShieldFramesKnownAbsorbAuraPresent))
+            end
+
             local bar = playerFrame and playerFrame.ShieldFramesOverlayBar
             local barShown = bar and bar:IsShown()
             ChatPrint("|cff00ccffShieldFrames|r custom overlay bar: " .. tostring(not not barShown))
+
+            local texture = playerFrame and playerFrame.ShieldFramesOverlay
+            local textureShown = texture and not IsFrameForbidden(texture) and texture:IsShown()
+            if barShown and textureShown then
+                ChatPrint("|cff00ccffShieldFrames|r custom overlay texture: true (stripe on bar)")
+            else
+                ChatPrint("|cff00ccffShieldFrames|r custom overlay texture: " .. tostring(not not textureShown))
+            end
 
             if barShown and bar then
                 local fill = bar:GetStatusBarTexture()
@@ -1592,8 +2405,10 @@ local function PrintDebugInfo()
                 and playerFrame.ShieldFramesGlow:IsShown()
             ChatPrint("|cff00ccffShieldFrames|r custom glow: " .. tostring(not not glowActive))
 
-            if not glowShown and not barShown then
-                ChatPrint("|cff00ccffShieldFrames|r no overshield glow. Cast a barrier at full HP to test.")
+            if not glowShown and not barShown and not textureShown
+                and not (playerFrame and playerFrame.ShieldFramesOvershieldActive)
+            then
+                ChatPrint("|cff00ccffShieldFrames|r no overshield. Gain a shield absorb (Blood Shield, barrier, PW:S, etc.), then /sfdebug again.")
             end
             return
         end
@@ -1677,10 +2492,51 @@ eventFrame:RegisterEvent("UNIT_ABSORB_AMOUNT_CHANGED")
 eventFrame:RegisterEvent("UNIT_AURA")
 eventFrame:RegisterEvent("UNIT_MAXHEALTH")
 eventFrame:RegisterEvent("UNIT_HEALTH")
+eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
 eventFrame:SetScript("OnEvent", function(_, event, unit)
     if event == "PLAYER_LOGIN" or event == "GROUP_ROSTER_UPDATE" then
         ns.RefreshAllFrames()
         return
+    end
+
+    if event == "PLAYER_REGEN_ENABLED" or event == "PLAYER_REGEN_DISABLED" then
+        if event == "PLAYER_REGEN_ENABLED" then
+            local stillHasShield = UnitHasKnownAbsorbCandidate("player")
+                or ((GetAbsorbFromKnownAura("player") or 0) > 0)
+            if stillHasShield then
+                -- Soft leave: keep the overlay continuous so it doesn't jump when absorb becomes readable.
+                if PlayerFrame then
+                    PlayerFrame.ShieldFramesLastAbsorbEvent = nil
+                    RefreshKnownAbsorbAuraState(PlayerFrame, "player")
+                end
+            else
+                ClearFrameOvershieldState(PlayerFrame)
+                ClearFrameOvershieldState(TargetFrame)
+                ClearFrameOvershieldState(FocusFrame)
+            end
+        elseif PlayerFrame then
+            PlayerFrame.ShieldFramesKnownAbsorbAuraPresent = nil
+        end
+        ns.RefreshAllFrames()
+        return
+    end
+
+    if event == "UNIT_ABSORB_AMOUNT_CHANGED" and unit == "player" and PlayerFrame then
+        if KnownAbsorbAuraIsDepleted(unit) or UnitHasReadableAbsorb(unit) == false then
+            PlayerFrame.ShieldFramesLastAbsorbEvent = nil
+            PlayerFrame.ShieldFramesKnownAbsorbAuraPresent = false
+            PlayerFrame.ShieldFramesLastAbsorbAmount = nil
+        else
+            PlayerFrame.ShieldFramesLastAbsorbEvent = GetTime()
+            if UnitHasKnownAbsorbAura(unit) then
+                PlayerFrame.ShieldFramesKnownAbsorbAuraPresent = true
+            end
+            local fromAura = GetAbsorbFromKnownAura(unit)
+            if fromAura and fromAura > 0 then
+                PlayerFrame.ShieldFramesLastAbsorbAmount = fromAura
+            end
+        end
     end
 
     if unit then
@@ -1698,11 +2554,11 @@ local function InitializeAddon()
     end
 
     hooksecurefunc("CompactUnitFrame_UpdateHealPrediction", function(frame)
-        SafeUpdateCompactFrame(frame)
+        DeferCompactFrameUpdate(frame)
     end)
 
     hooksecurefunc("UnitFrameHealPredictionBars_Update", function(frame)
-        SafeUpdateUnitFrame(frame)
+        DeferUnitFrameUpdate(frame)
     end)
 
     C_Timer.NewTicker(0.15, function()
@@ -1718,8 +2574,8 @@ local function InitializeAddon()
         if FocusFrame and FocusFrame.unit then
             SafeUpdateUnitFrame(FocusFrame)
         end
-        if PetFrame and PetFrame.unit then
-            SafeUpdateUnitFrame(PetFrame)
+        if PetFrame then
+            ClearUnsupportedUnitFrame(PetFrame)
         end
     end)
 end
