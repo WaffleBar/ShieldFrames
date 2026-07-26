@@ -540,10 +540,13 @@ local function ForEachHelpfulAura(unit, callback)
         return
     end
     -- Never break on a nil slot: Midnight can omit secret auras mid-list.
+    -- Callback may return false to stop early (presence checks).
     for index = 1, 40 do
         local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, index, "HELPFUL")
         if ok and aura then
-            callback(aura, index)
+            if callback(aura, index) == false then
+                return
+            end
         end
     end
 end
@@ -688,6 +691,153 @@ local function GetAbsorbAmountForSpellId(unit, spellId, maxHealth)
     return GetAbsorbAmountFromAura(aura, maxHealth)
 end
 
+-- Small proc absorbs (Divine Aegis) should not use the full generic fraction estimate
+-- or they inflate the hatch and fight Blizzard's true width.
+local SMALL_PROC_ABSORB_SPELL_IDS = {
+    [47753] = true, -- Divine Aegis
+}
+
+local ABSORB_SNAPSHOT_TTL = 0.2
+local absorbSnapshots = {}
+
+local function InvalidateAbsorbSnapshot(unit)
+    if unit then
+        absorbSnapshots[unit] = nil
+    end
+end
+
+local function ForEachTrackedAbsorbAura(unit, callback)
+    if not unit or not callback then
+        return
+    end
+
+    local seen = {}
+    local foundViaSpellId = false
+    local function consider(spellId, aura)
+        spellId = SafeNumber(spellId)
+        if not spellId or seen[spellId] then
+            return
+        end
+        if not aura then
+            aura = SafeGetAuraBySpellID(unit, spellId)
+        end
+        if not aura then
+            return
+        end
+        seen[spellId] = true
+        foundViaSpellId = true
+        callback(aura, spellId)
+    end
+
+    for spellId in pairs(SEED_ABSORB_SPELL_IDS) do
+        consider(spellId, nil)
+    end
+    local learned = GetDB().learnedAbsorbSpellIds
+    if type(learned) == "table" then
+        for spellId in pairs(learned) do
+            consider(spellId, nil)
+        end
+    end
+    -- Index scan is a fallback when spell-ID lookups miss; skip if we already found absorbs.
+    if not foundViaSpellId then
+        ForEachHelpfulAura(unit, function(aura)
+            local spellId = SafeAuraSpellId(aura)
+            if spellId and IsTrackedAbsorbSpellId(spellId) then
+                consider(spellId, aura)
+            end
+        end)
+    end
+end
+
+local function BuildAbsorbSnapshot(unit, maxHealth)
+    local snap = {
+        t = GetTime(),
+        maxHealth = SafeNumber(maxHealth),
+        hasKnown = false,
+        total = nil,
+        fraction = nil,
+        depleted = false,
+        count = 0,
+    }
+
+    local total = 0
+    local sawAura = false
+    local sawPositive = false
+    local sawZeroOnly = true
+    local fraction = 0
+
+    ForEachTrackedAbsorbAura(unit, function(aura, spellId)
+        sawAura = true
+        snap.count = snap.count + 1
+        snap.hasKnown = true
+
+        local amount = GetAbsorbAmountFromAura(aura, maxHealth)
+        if amount == nil and spellId then
+            amount = EstimateAbsorbForSpellId(spellId, maxHealth)
+        end
+        if amount and amount > 0 then
+            total = total + amount
+            sawPositive = true
+            sawZeroOnly = false
+        elseif amount == 0 then
+            -- depleted instance of this aura
+        else
+            sawZeroOnly = false
+        end
+
+        if SMALL_PROC_ABSORB_SPELL_IDS[spellId] then
+            fraction = fraction + 0.08
+        elseif MAGE_BARRIER_SPELL_IDS[spellId] then
+            fraction = fraction + MAGE_BARRIER_HEALTH_FRACTION
+        else
+            fraction = fraction + GENERIC_ABSORB_HEALTH_FRACTION
+        end
+    end)
+
+    if not sawAura then
+        snap.total = nil
+        snap.fraction = nil
+        snap.depleted = false
+    else
+        if sawPositive then
+            snap.total = total
+            snap.depleted = false
+        elseif sawZeroOnly then
+            snap.total = 0
+            snap.depleted = true
+        else
+            snap.total = nil
+            snap.depleted = false
+        end
+        if fraction > 0 then
+            if fraction > 0.85 then
+                snap.fraction = 0.85
+            else
+                snap.fraction = fraction
+            end
+        end
+    end
+
+    absorbSnapshots[unit] = snap
+    return snap
+end
+
+local function GetAbsorbSnapshot(unit, maxHealth)
+    if not unit then
+        return nil
+    end
+
+    maxHealth = SafeNumber(maxHealth)
+    local now = GetTime()
+    local snap = absorbSnapshots[unit]
+    if snap and (now - snap.t) <= ABSORB_SNAPSHOT_TTL then
+        if maxHealth == nil or snap.maxHealth == nil or snap.maxHealth == maxHealth then
+            return snap
+        end
+    end
+    return BuildAbsorbSnapshot(unit, maxHealth)
+end
+
 local function GetKnownAbsorbAuraData(unit)
     if not unit or not C_UnitAuras then
         return nil
@@ -713,13 +863,11 @@ local function GetKnownAbsorbAuraData(unit)
 
     local foundAura, foundSpellId
     ForEachHelpfulAura(unit, function(aura)
-        if foundAura then
-            return
-        end
         local spellId = SafeAuraSpellId(aura)
         if spellId and IsTrackedAbsorbSpellId(spellId) then
             foundAura = aura
             foundSpellId = spellId
+            return false
         end
     end)
     if foundAura then
@@ -730,135 +878,30 @@ local function GetKnownAbsorbAuraData(unit)
 end
 
 local function UnitHasKnownAbsorbAura(unit)
-    return GetKnownAbsorbAuraData(unit) ~= nil
+    local snap = GetAbsorbSnapshot(unit, nil)
+    return snap ~= nil and snap.hasKnown == true
 end
 
 local function UnitHasDamageBarrierAura(unit)
     return UnitHasKnownAbsorbAura(unit)
 end
 
-local function ForEachTrackedAbsorbAura(unit, callback)
-    if not unit or not callback then
-        return
-    end
-
-    local seen = {}
-    local function consider(spellId, aura)
-        spellId = SafeNumber(spellId)
-        if not spellId or seen[spellId] then
-            return
-        end
-        if not aura then
-            aura = SafeGetAuraBySpellID(unit, spellId)
-        end
-        if not aura then
-            return
-        end
-        seen[spellId] = true
-        callback(aura, spellId)
-    end
-
-    for spellId in pairs(SEED_ABSORB_SPELL_IDS) do
-        consider(spellId, nil)
-    end
-    local learned = GetDB().learnedAbsorbSpellIds
-    if type(learned) == "table" then
-        for spellId in pairs(learned) do
-            consider(spellId, nil)
-        end
-    end
-    ForEachHelpfulAura(unit, function(aura)
-        local spellId = SafeAuraSpellId(aura)
-        if spellId and IsTrackedAbsorbSpellId(spellId) then
-            consider(spellId, aura)
-        end
-    end)
-end
-
-local function CountKnownAbsorbAuras(unit)
-    if not unit then
-        return 0
-    end
-
-    local count = 0
-    ForEachTrackedAbsorbAura(unit, function()
-        count = count + 1
-    end)
-    return count
-end
-
--- Small proc absorbs (Divine Aegis) should not use the full generic fraction estimate
--- or they inflate the hatch and fight Blizzard's true width.
-local SMALL_PROC_ABSORB_SPELL_IDS = {
-    [47753] = true, -- Divine Aegis
-}
-
 -- When absolute absorb/max are secret, size the hatch as a fraction of bar width.
 local function EstimateKnownAbsorbBarFraction(unit)
-    local count = CountKnownAbsorbAuras(unit)
-    if count <= 0 then
+    local snap = GetAbsorbSnapshot(unit, nil)
+    if not snap then
         return nil
     end
-
-    local fraction = 0
-    ForEachTrackedAbsorbAura(unit, function(_, spellId)
-        if SMALL_PROC_ABSORB_SPELL_IDS[spellId] then
-            -- Prefer Blizzard pixel width for these; only a light fallback.
-            fraction = fraction + 0.08
-        elseif MAGE_BARRIER_SPELL_IDS[spellId] then
-            fraction = fraction + MAGE_BARRIER_HEALTH_FRACTION
-        else
-            fraction = fraction + GENERIC_ABSORB_HEALTH_FRACTION
-        end
-    end)
-
-    if fraction <= 0 then
-        return nil
-    end
-    if fraction > 0.85 then
-        return 0.85
-    end
-    return fraction
+    return snap.fraction
 end
 
 -- Sum every tracked absorb aura currently on the unit (seed + learned).
 local function GetTotalKnownAbsorbAmount(unit, maxHealth)
-    if not unit then
+    local snap = GetAbsorbSnapshot(unit, maxHealth)
+    if not snap then
         return nil
     end
-
-    local total = 0
-    local sawAura = false
-    local sawPositive = false
-    local sawZeroOnly = true
-
-    ForEachTrackedAbsorbAura(unit, function(aura, spellId)
-        sawAura = true
-        local amount = GetAbsorbAmountFromAura(aura, maxHealth)
-        if amount == nil and spellId then
-            amount = EstimateAbsorbForSpellId(spellId, maxHealth)
-        end
-        if amount and amount > 0 then
-            total = total + amount
-            sawPositive = true
-            sawZeroOnly = false
-        elseif amount == 0 then
-            -- depleted instance of this aura
-        else
-            sawZeroOnly = false
-        end
-    end)
-
-    if not sawAura then
-        return nil
-    end
-    if sawPositive then
-        return total
-    end
-    if sawZeroOnly then
-        return 0
-    end
-    return nil
+    return snap.total
 end
 
 local function GetAbsorbFromKnownAura(unit)
@@ -866,15 +909,16 @@ local function GetAbsorbFromKnownAura(unit)
 end
 
 local function KnownAbsorbAuraIsDepleted(unit)
-    local total = GetTotalKnownAbsorbAmount(unit, nil)
-    return total == 0
+    local snap = GetAbsorbSnapshot(unit, nil)
+    return snap ~= nil and snap.depleted == true
 end
 
 local function UnitHasKnownAbsorbCandidate(unit)
-    if not UnitHasKnownAbsorbAura(unit) then
+    local snap = GetAbsorbSnapshot(unit, nil)
+    if not snap or not snap.hasKnown then
         return false
     end
-    return not KnownAbsorbAuraIsDepleted(unit)
+    return not snap.depleted
 end
 
 local function CountLearnedAbsorbSpellIds()
@@ -2071,8 +2115,8 @@ local function ApplyOwnedOvershieldVisual(frame, healthBar, unit)
         maxHealth = SafeNumber(frame.ShieldFramesLastMaxHealth)
     end
 
-    local absorb = unit and GetTotalKnownAbsorbAmount(unit, maxHealth) or nil
-    absorb = SafeNumber(absorb)
+    local snap = unit and GetAbsorbSnapshot(unit, maxHealth) or nil
+    local absorb = snap and SafeNumber(snap.total) or nil
     if unit then
         local calcTotal = select(1, GetCalculatorAbsorbValues(unit))
         calcTotal = SafeNumber(calcTotal)
@@ -2081,8 +2125,8 @@ local function ApplyOwnedOvershieldVisual(frame, healthBar, unit)
         end
     end
 
-    local hasKnownAura = unit and UnitHasKnownAbsorbAura(unit)
-    local auraDepleted = unit and KnownAbsorbAuraIsDepleted(unit)
+    local hasKnownAura = snap and snap.hasKnown == true
+    local auraDepleted = snap and snap.depleted == true
     local readableAbsorb = unit and UnitHasReadableAbsorb(unit)
     -- Live Blizzard hatch (shown regions) or width just cached from FillBar.
     local liveWidth = SnapshotWidestAbsorbWidth(frame, healthBar)
@@ -2140,11 +2184,14 @@ local function ApplyOwnedOvershieldVisual(frame, healthBar, unit)
             displayWidth = fromAura
         end
     end
-    local fraction = unit and EstimateKnownAbsorbBarFraction(unit)
-    if IsPositiveFinite(fraction) then
-        local fromFraction = fraction * ownedWidth
-        if not IsPositiveFinite(displayWidth) or fromFraction > displayWidth then
-            displayWidth = fromFraction
+    -- Fraction estimate only when we lack an absolute absorb total (avoids a second scan path).
+    if not hasPositiveAbsorb then
+        local fraction = snap and snap.fraction
+        if IsPositiveFinite(fraction) then
+            local fromFraction = fraction * ownedWidth
+            if not IsPositiveFinite(displayWidth) or fromFraction > displayWidth then
+                displayWidth = fromFraction
+            end
         end
     end
     -- Never fall back to LastOverlayWidth — that kept hatch+glow after shields expired.
@@ -3091,9 +3138,10 @@ local function UpdateMidnightOvershield(frame, healthBar, unit)
     -- Own hatch+glow when Blizzard shows absorb OR we know absorb auras are up.
     -- Do this before clear/evidence checks (party absorb amounts are often secret).
     local unitToken = unit or frame.displayedUnit or frame.unit
+    local absorbSnap = unitToken and GetAbsorbSnapshot(unitToken, nil) or nil
     local cachedBlizz = SafeNumber(frame.ShieldFramesBlizzAbsorbWidth)
     if FrameHasBlizzAbsorbHatch(frame, healthBar)
-        or (unitToken and UnitHasKnownAbsorbAura(unitToken))
+        or (absorbSnap and absorbSnap.hasKnown)
         or (IsPositiveFinite(cachedBlizz) and cachedBlizz > 1)
     then
         if ApplyOwnedOvershieldVisual(frame, healthBar, unitToken) then
@@ -3859,6 +3907,46 @@ end
 -- hooks (that path taints and trips ADDON_ACTION_BLOCKED).
 local pendingAbsorbLearnUnits = {}
 local absorbLearnTicker
+local pendingUnitRefresh = {}
+local unitRefreshQueued
+
+local function IsTrackedUnitToken(unit)
+    if type(unit) ~= "string" then
+        return false
+    end
+    if unit == "player" or unit == "target" or unit == "focus" or unit == "pet" then
+        return true
+    end
+    local prefix = unit:match("^(%a+)%d+$")
+    return prefix == "party" or prefix == "raid"
+end
+
+local function QueueUnitFrameRefresh(unit)
+    if not unit then
+        return
+    end
+    pendingUnitRefresh[unit] = true
+    if unitRefreshQueued then
+        return
+    end
+    if not C_Timer or not C_Timer.After then
+        local units = pendingUnitRefresh
+        pendingUnitRefresh = {}
+        for unitToken in pairs(units) do
+            RefreshUnitFrameByUnit(unitToken)
+        end
+        return
+    end
+    unitRefreshQueued = true
+    C_Timer.After(0, function()
+        unitRefreshQueued = nil
+        local units = pendingUnitRefresh
+        pendingUnitRefresh = {}
+        for unitToken in pairs(units) do
+            RefreshUnitFrameByUnit(unitToken)
+        end
+    end)
+end
 
 local function QueueAbsorbSpellLearn(unit)
     if not unit then
@@ -3879,6 +3967,23 @@ local function QueueAbsorbSpellLearn(unit)
     end)
 end
 
+local function FrameNeedsSafetyPoll(frame)
+    if not frame then
+        return false
+    end
+    if frame.ShieldFramesOvershieldActive then
+        return true
+    end
+    if FrameShowsCustomOverlay(frame) then
+        return true
+    end
+    local blizzWidth = SafeNumber(frame.ShieldFramesBlizzAbsorbWidth)
+    if IsPositiveFinite(blizzWidth) and blizzWidth > 1 then
+        return true
+    end
+    return HasRecentAbsorbEvent(frame, 5)
+end
+
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
@@ -3894,12 +3999,14 @@ eventFrame:SetScript("OnEvent", function(_, event, unit)
             GetLearnedAbsorbSpellIds()
             QueueAbsorbSpellLearn("player")
         end
+        absorbSnapshots = {}
         ns.RefreshAllFrames()
         return
     end
 
     if event == "PLAYER_REGEN_ENABLED" or event == "PLAYER_REGEN_DISABLED" then
         if event == "PLAYER_REGEN_ENABLED" then
+            InvalidateAbsorbSnapshot("player")
             local stillHasShield = UnitHasKnownAbsorbCandidate("player")
                 or ((GetAbsorbFromKnownAura("player") or 0) > 0)
                 or UnitHasReadableAbsorb("player") == true
@@ -3922,6 +4029,11 @@ eventFrame:SetScript("OnEvent", function(_, event, unit)
         return
     end
 
+    -- Ignore nameplates / arena / boss tokens — absorb work is for player + group frames.
+    if unit and not IsTrackedUnitToken(unit) then
+        return
+    end
+
     local function ClearPlayerOwnedOvershields()
         if PlayerFrame then
             ClearFrameOvershieldState(PlayerFrame)
@@ -3934,17 +4046,25 @@ eventFrame:SetScript("OnEvent", function(_, event, unit)
         end)
     end
 
+    if event == "UNIT_HEALTH" and unit then
+        -- Health spam is frequent in combat; coalesce to next frame.
+        QueueUnitFrameRefresh(unit)
+        return
+    end
+
     if event == "UNIT_ABSORB_AMOUNT_CHANGED" and unit then
+        InvalidateAbsorbSnapshot(unit)
         QueueAbsorbSpellLearn(unit)
         local function TouchFrame(frame)
             if not frame then
                 return
             end
-            if KnownAbsorbAuraIsDepleted(unit) or UnitHasReadableAbsorb(unit) == false then
+            local snap = GetAbsorbSnapshot(unit, nil)
+            if (snap and snap.depleted) or UnitHasReadableAbsorb(unit) == false then
                 frame.ShieldFramesLastAbsorbEvent = nil
             else
                 frame.ShieldFramesLastAbsorbEvent = GetTime()
-                if UnitHasKnownAbsorbAura(unit) then
+                if snap and snap.hasKnown then
                     frame.ShieldFramesKnownAbsorbAuraPresent = true
                 end
                 local _, maxHealth = GetUnitHealthValues(frame, unit)
@@ -3974,6 +4094,7 @@ eventFrame:SetScript("OnEvent", function(_, event, unit)
     end
 
     if event == "UNIT_AURA" and unit then
+        InvalidateAbsorbSnapshot(unit)
         QueueAbsorbSpellLearn(unit)
         if unit == "player"
             and not UnitHasKnownAbsorbAura(unit)
@@ -3983,8 +4104,12 @@ eventFrame:SetScript("OnEvent", function(_, event, unit)
         end
     end
 
+    if event == "UNIT_MAXHEALTH" and unit then
+        InvalidateAbsorbSnapshot(unit)
+    end
+
     if unit then
-        RefreshUnitFrameByUnit(unit)
+        QueueUnitFrameRefresh(unit)
     else
         ns.RefreshAllFrames()
     end
@@ -4002,9 +4127,9 @@ local function InitializeAddon()
             return
         end
         AttachBlizzAbsorbKillers(frame)
-        -- Snapshot Blizzard's absorb width first (secret-sized), then draw ours and strip Blizz.
+        -- Snapshot Blizzard's absorb width first (secret-sized), then coalesce the full update.
         SnapshotBlizzAbsorbWidth(frame, frame.healthBar)
-        SafeUpdateCompactFrame(frame)
+        DeferCompactFrameUpdate(frame)
     end)
 
     hooksecurefunc("UnitFrameHealPredictionBars_Update", function(frame)
@@ -4028,7 +4153,7 @@ local function InitializeAddon()
                 local shown = true
                 if bar.IsShown then
                     local okShown, isShown = pcall(bar.IsShown, bar)
-                    shown = okShown and isShown
+                    shown = okShown and SafeBool(isShown)
                 end
                 if ok and IsPositiveFinite(width) and width > 1 then
                     local prev = SafeNumber(frame.ShieldFramesBlizzAbsorbWidth)
@@ -4042,39 +4167,33 @@ local function InitializeAddon()
                     -- Genuinely collapsed while Blizzard still owns a shown absorb bar.
                     frame.ShieldFramesBlizzAbsorbWidth = nil
                 end
-                if frame.healthBar then
-                    local unit = frame.displayedUnit or frame.unit
-                    if not ApplyOwnedOvershieldVisual(frame, frame.healthBar, unit) then
-                        local stillCached = SafeNumber(frame.ShieldFramesBlizzAbsorbWidth)
-                        if unit
-                            and not UnitHasKnownAbsorbAura(unit)
-                            and not (IsPositiveFinite(stillCached) and stillCached > 1)
-                        then
-                            ClearFrameOvershieldState(frame)
-                        end
-                    end
-                end
+                -- Width snapshot only here; full hatch apply is coalesced with heal-pred updates.
+                DeferCompactFrameUpdate(frame)
             end
         end)
     end
 
-    C_Timer.NewTicker(0.15, function()
+    -- Slow safety poll only for frames with recent absorb evidence (not a full raid sweep).
+    C_Timer.NewTicker(1.0, function()
         if not IsEnabled() then
             return
         end
-        if PlayerFrame and PlayerFrame.unit then
+        if PlayerFrame and PlayerFrame.unit and FrameNeedsSafetyPoll(PlayerFrame) then
             SafeUpdateUnitFrame(PlayerFrame)
         end
-        if TargetFrame and TargetFrame.unit then
+        if TargetFrame and TargetFrame.unit and FrameNeedsSafetyPoll(TargetFrame) then
             SafeUpdateUnitFrame(TargetFrame)
         end
-        if FocusFrame and FocusFrame.unit then
+        if FocusFrame and FocusFrame.unit and FrameNeedsSafetyPoll(FocusFrame) then
             SafeUpdateUnitFrame(FocusFrame)
         end
         if PetFrame then
             ClearUnsupportedUnitFrame(PetFrame)
         end
         ForEachCompactFrame(function(memberFrame)
+            if not FrameNeedsSafetyPoll(memberFrame) then
+                return
+            end
             SetFrameClipOverflow(memberFrame, memberFrame.healthBar, true)
             if memberFrame.healthBar and memberFrame.healthBar.SetClipsChildren then
                 memberFrame.healthBar:SetClipsChildren(false)

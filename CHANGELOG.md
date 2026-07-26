@@ -2,6 +2,11 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.150] — 2026-07-26
+
+### Fixed
+- Combat microstutter / high CPU: replace 0.15s full-raid poll with 1s evidence-only safety tick; ignore non-group unit events; coalesce health/heal-pred updates; cache absorb aura scans per unit so secret-value fallbacks do not re-scan 40 auras multiple times per frame
+
 ## [1.0.149] — 2026-07-26
 
 ### Fixed
