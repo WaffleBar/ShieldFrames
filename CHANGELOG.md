@@ -2,6 +2,11 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.155] — 2026-07-26
+
+### Fixed
+- Real-time Blood Shield tracking under Midnight secrets: stop grow-only Blizzard width cache and stop letting a stale LastAbsorbAmount override a smaller live hatch — FillBar / absorb-change events now shrink the overlay as the shield depletes
+
 ## [1.0.154] — 2026-07-26
 
 ### Fixed

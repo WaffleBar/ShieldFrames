@@ -2167,11 +2167,13 @@ local function ApplyOwnedOvershieldVisual(frame, healthBar, unit)
 
     local snap = unit and GetAbsorbSnapshot(unit, maxHealth) or nil
     local absorb = snap and SafeNumber(snap.total) or nil
+    local absorbIsLive = IsPositiveFinite(absorb) and absorb > 0
     if unit then
         local calcTotal = select(1, GetCalculatorAbsorbValues(unit))
         calcTotal = SafeNumber(calcTotal)
         if IsPositiveFinite(calcTotal) and (not absorb or calcTotal > absorb) then
             absorb = calcTotal
+            absorbIsLive = true
         end
     end
 
@@ -2200,6 +2202,7 @@ local function ApplyOwnedOvershieldVisual(frame, healthBar, unit)
         then
             absorb = lastAbsorb
             hasPositiveAbsorb = true
+            absorbIsLive = false
         end
     end
 
@@ -2251,24 +2254,29 @@ local function ApplyOwnedOvershieldVisual(frame, healthBar, unit)
     end
     frame.ShieldFramesCachedBarWidth = ownedWidth
 
-    -- Size from the widest signal: Blizzard layout OR summed absorb auras (Barrier +
-    -- PW:S / Void Shield). Blizzard-only sizing ignored stacked barriers.
+    -- Size from the widest LIVE signal. Blizzard's secret-sized absorb pixel width is
+    -- the real-time truth when aura/calculator amounts are secret. A stale
+    -- LastAbsorbAmount must NOT override a smaller live Blizz hatch (Blood Shield depleting).
     local displayWidth
     if hasBlizzSize and IsPositiveFinite(blizzWidth) and blizzWidth > 1 then
         displayWidth = blizzWidth
     end
     if hasPositiveAbsorb and IsPositiveFinite(maxHealth) and maxHealth > 0 then
         local fromAura = (absorb / maxHealth) * ownedWidth
-        if not IsPositiveFinite(displayWidth) or fromAura > displayWidth then
+        if absorbIsLive then
+            if not IsPositiveFinite(displayWidth) or fromAura > displayWidth then
+                displayWidth = fromAura
+            end
+        elseif not IsPositiveFinite(displayWidth) then
             displayWidth = fromAura
         end
     end
-    -- Fraction estimate only when we lack an absolute absorb total (avoids a second scan path).
-    if not hasPositiveAbsorb then
+    -- Fraction estimate only when we lack an absolute absorb total and Blizz width.
+    if not hasPositiveAbsorb and not IsPositiveFinite(displayWidth) then
         local fraction = snap and snap.fraction
         if IsPositiveFinite(fraction) then
             local fromFraction = fraction * ownedWidth
-            if not IsPositiveFinite(displayWidth) or fromFraction > displayWidth then
+            if IsPositiveFinite(fromFraction) then
                 displayWidth = fromFraction
             end
         end
@@ -2449,8 +2457,17 @@ local function ApplyOwnedOvershieldVisual(frame, healthBar, unit)
     if IsPositiveFinite(maxHealth) then
         frame.ShieldFramesLastMaxHealth = maxHealth
     end
-    if IsPositiveFinite(absorb) then
+    -- Only cache absorb amounts from LIVE aura/calculator reads. Stale LastAbsorb
+    -- was freezing the hatch while Blood Shield depleted under Midnight secrets.
+    if absorbIsLive and IsPositiveFinite(absorb) then
         frame.ShieldFramesLastAbsorbAmount = absorb
+    elseif IsPositiveFinite(displayWidth) and IsPositiveFinite(ownedWidth) and ownedWidth > 0
+        and IsPositiveFinite(maxHealth) and maxHealth > 0
+        and (hasBlizzSize or glowLive)
+    then
+        -- Derive a tracking amount from Blizzard's live pixel width so the next
+        -- frame still has a proportional fallback if the FillBar snapshot misses.
+        frame.ShieldFramesLastAbsorbAmount = (displayWidth / ownedWidth) * maxHealth
     end
     frame.ShieldFramesLastOverlayWidth = displayWidth
     -- Do not copy displayWidth back into BlizzAbsorbWidth — that kept expired shields
@@ -2476,7 +2493,9 @@ local function SnapshotBlizzAbsorbWidth(frame, healthBar)
         return nil
     end
 
-    local best = SafeNumber(frame.ShieldFramesBlizzAbsorbWidth)
+    -- Measure live regions this pass only. Do NOT grow-only merge with the old
+    -- cache — that froze Blood Shield at peak width while it depleted.
+    local liveBest = nil
 
     local candidates = {
         frame.totalAbsorbOverlay,
@@ -2489,27 +2508,22 @@ local function SnapshotBlizzAbsorbWidth(frame, healthBar)
 
     for _, region in ipairs(candidates) do
         if region and not IsFrameForbidden(region) then
-            local shown = true
-            if region.IsShown then
-                local okShown, isShown = pcall(region.IsShown, region)
-                shown = okShown and isShown
-            end
-            -- Detached regions may be hidden but still report their last width.
             local ok, width = pcall(function()
                 return SafeNumber(region.GetWidth and region:GetWidth())
             end)
             if ok and IsPositiveFinite(width) and width > 1 then
-                if not best or width > best then
-                    best = width
+                if not liveBest or width > liveBest then
+                    liveBest = width
                 end
             end
         end
     end
 
-    if IsPositiveFinite(best) then
-        frame.ShieldFramesBlizzAbsorbWidth = best
+    if IsPositiveFinite(liveBest) then
+        frame.ShieldFramesBlizzAbsorbWidth = liveBest
+        return liveBest
     end
-    return best
+    return SafeNumber(frame.ShieldFramesBlizzAbsorbWidth)
 end
 
 local function DetachShieldTexturesUnder(root, ownerFrame, depth)
@@ -2870,14 +2884,6 @@ end
 
 local function ApplyOvershieldBar(frame, healthBar, absorbAmount, maxHealth, overshieldAmount)
     local unit = frame.displayedUnit or frame.unit
-    -- Prefer owned SoftEdgeGlow hatch. Seed last absorb so ApplyOwned can size when
-    -- Midnight hid aura points but ResolveMidnight still found a render amount.
-    if IsPositiveFinite(SafeNumber(absorbAmount)) then
-        frame.ShieldFramesLastAbsorbAmount = SafeNumber(absorbAmount)
-    end
-    if IsPositiveFinite(SafeNumber(maxHealth)) then
-        frame.ShieldFramesLastMaxHealth = SafeNumber(maxHealth)
-    end
     if ApplyOwnedOvershieldVisual(frame, healthBar, unit) then
         return true
     end
@@ -4212,6 +4218,8 @@ eventFrame:SetScript("OnEvent", function(_, event, unit)
             if not frame then
                 return
             end
+            local healthBar = frame.healthbar or frame.healthBar
+            SnapshotBlizzAbsorbWidth(frame, healthBar)
             local snap = GetAbsorbSnapshot(unit, nil)
             if (snap and snap.depleted) or UnitHasReadableAbsorb(unit) == false then
                 frame.ShieldFramesLastAbsorbEvent = nil
@@ -4221,9 +4229,20 @@ eventFrame:SetScript("OnEvent", function(_, event, unit)
                     frame.ShieldFramesKnownAbsorbAuraPresent = true
                 end
                 local _, maxHealth = GetUnitHealthValues(frame, unit)
+                maxHealth = SafeNumber(maxHealth) or SafeNumber(frame.ShieldFramesLastMaxHealth)
                 local totalKnown = GetTotalKnownAbsorbAmount(unit, maxHealth)
                 if totalKnown and totalKnown > 0 then
                     frame.ShieldFramesLastAbsorbAmount = totalKnown
+                else
+                    -- Secret amounts: track from Blizzard's live hatch pixels so depleting
+                    -- Blood Shield shrinks our overlay in real time.
+                    local blizzW = SafeNumber(frame.ShieldFramesBlizzAbsorbWidth)
+                    local barW = SafeRegionWidth(healthBar) or SafeNumber(frame.ShieldFramesCachedBarWidth)
+                    if IsPositiveFinite(blizzW) and IsPositiveFinite(barW) and barW > 0
+                        and IsPositiveFinite(maxHealth) and maxHealth > 0
+                    then
+                        frame.ShieldFramesLastAbsorbAmount = (blizzW / barW) * maxHealth
+                    end
                 end
             end
         end
@@ -4309,13 +4328,8 @@ local function InitializeAddon()
                     shown = okShown and SafeBool(isShown)
                 end
                 if ok and IsPositiveFinite(width) and width > 1 then
-                    local prev = SafeNumber(frame.ShieldFramesBlizzAbsorbWidth)
-                    -- Prefer overlay width; keep the widest recent absorb size.
-                    -- Still cache when not shown — we SoftHide Blizzard chrome ourselves,
-                    -- and clearing on Hide made party shields (secret auras) lose glow.
-                    if bar == frame.totalAbsorbOverlay or not prev or width > prev then
-                        frame.ShieldFramesBlizzAbsorbWidth = width
-                    end
+                    -- Always accept live FillBar widths, including shrink on deplete.
+                    frame.ShieldFramesBlizzAbsorbWidth = width
                 elseif ok and shown and (not IsPositiveFinite(width) or width <= 1) then
                     -- Genuinely collapsed while Blizzard still owns a shown absorb bar.
                     frame.ShieldFramesBlizzAbsorbWidth = nil
