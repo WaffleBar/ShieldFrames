@@ -2,6 +2,11 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.156] — 2026-07-26
+
+### Fixed
+- Blood Shield real-time shrink under Midnight secrets: stop `Hide()`ing Blizzard's absorb hatch — alpha-fade only so FillBar/`GetWidth` keep updating while SF draws the owned overlay (was freezing on stale LastAbsorbAmount once the bar was hidden)
+
 ## [1.0.155] — 2026-07-26
 
 ### Fixed

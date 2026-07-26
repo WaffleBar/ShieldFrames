@@ -1022,7 +1022,26 @@ local function FrameShowsAbsorbBar(frame)
         return false
     end
 
-    return bar:IsShown()
+    -- SoftHide sets alpha 0 but keeps the bar shown so Blizzard can keep sizing it.
+    -- Treat a real pixel width as the live signal, not merely IsShown.
+    local ok, width = pcall(function()
+        return SafeNumber(bar.GetWidth and bar:GetWidth())
+    end)
+    if ok and IsPositiveFinite(width) and width > 1 then
+        return true
+    end
+
+    local overlay = frame.totalAbsorbOverlay or (bar.overlay)
+    if overlay and not IsFrameForbidden(overlay) then
+        local okO, oWidth = pcall(function()
+            return SafeNumber(overlay.GetWidth and overlay:GetWidth())
+        end)
+        if okO and IsPositiveFinite(oWidth) and oWidth > 1 then
+            return true
+        end
+    end
+
+    return false
 end
 
 local function HasRecentAbsorbEvent(frame)
@@ -2078,45 +2097,52 @@ local function HideAllBlizzAbsorbChrome(frame, healthBar)
 
     -- Soft-hide only. Detaching in OnShow caused a race where Blizzard never stayed
     -- visible long enough to measure, and our owned draw sometimes never ran.
-    local function SoftHide(region)
+    --
+    -- Hatch regions: alpha 0 ONLY — do not Hide(). Hiding stopped Blizzard from
+    -- updating secret FillBar widths, freezing LastAbsorbAmount while Blood Shield
+    -- depleted. Keeping them "shown" at alpha 0 lets GetWidth track live deplete.
+    -- Shadows / tip glow: alpha 0 is enough (glow also flagged faded).
+    local function SoftFade(region)
         if not region or IsFrameForbidden(region) then
             return
         end
         if region.SetAlpha then
             pcall(region.SetAlpha, region, 0)
         end
-        if region.Hide then
-            pcall(region.Hide, region)
-        end
     end
 
-    for _, key in ipairs({
+    local hatchKeys = {
         "totalAbsorb",
         "totalAbsorbOverlay",
         "totalAbsorbBar",
         "totalAbsorbBarOverlay",
-        "TotalAbsorbLeftShadow",
-        "totalAbsorbLeftShadow",
-        "TotalAbsorbRightShadow",
-        "totalAbsorbRightShadow",
-        "overAbsorbGlow",
-    }) do
+    }
+    for _, key in ipairs(hatchKeys) do
         local region = frame[key]
-        SoftHide(region)
+        SoftFade(region)
         if region and region.overlay then
-            SoftHide(region.overlay)
+            SoftFade(region.overlay)
         end
         if region and region.GetStatusBarTexture then
             local ok, fill = pcall(region.GetStatusBarTexture, region)
             if ok then
-                SoftHide(fill)
+                SoftFade(fill)
             end
         end
     end
 
+    for _, key in ipairs({
+        "TotalAbsorbLeftShadow",
+        "totalAbsorbLeftShadow",
+        "TotalAbsorbRightShadow",
+        "totalAbsorbRightShadow",
+    }) do
+        SoftFade(frame[key])
+    end
+
     if healthBar then
-        SoftHide(healthBar.totalAbsorb)
-        SoftHide(healthBar.totalAbsorbOverlay)
+        SoftFade(healthBar.totalAbsorb)
+        SoftFade(healthBar.totalAbsorbOverlay)
     end
 
     if frame.overAbsorbGlow then
@@ -2180,8 +2206,12 @@ local function ApplyOwnedOvershieldVisual(frame, healthBar, unit)
     local hasKnownAura = snap and snap.hasKnown == true
     local auraDepleted = snap and snap.depleted == true
     local readableAbsorb = unit and UnitHasReadableAbsorb(unit)
-    -- Live Blizzard hatch (shown regions) or width just cached from FillBar.
-    local liveWidth = SnapshotWidestAbsorbWidth(frame, healthBar)
+    -- Live Blizzard hatch pixel width (FillBar / GetWidth). Prefer direct width
+    -- reads over shown-only insets — SoftFade keeps hatch shown at alpha 0.
+    local liveWidth = SnapshotBlizzAbsorbWidth(frame, healthBar)
+    if not IsPositiveFinite(liveWidth) or liveWidth <= 1 then
+        liveWidth = SnapshotWidestAbsorbWidth(frame, healthBar)
+    end
     local blizzWidth = SafeNumber(frame.ShieldFramesBlizzAbsorbWidth)
     local hasLiveBlizz = IsPositiveFinite(liveWidth) and liveWidth > 1
     local hasCachedBlizz = IsPositiveFinite(blizzWidth) and blizzWidth > 1
@@ -3853,6 +3883,14 @@ local function PrintDebugInfo()
             ChatPrint("|cff00ccffShieldFrames|r blizz absorb bar visible: " .. tostring(
                 playerFrame and FrameShowsAbsorbBar(playerFrame) or false
             ))
+            if playerFrame then
+                ChatPrint("|cff00ccffShieldFrames|r blizz absorb width cache: " .. tostring(
+                    playerFrame.ShieldFramesBlizzAbsorbWidth or "nil"
+                ))
+                ChatPrint("|cff00ccffShieldFrames|r last absorb amount: " .. tostring(
+                    playerFrame.ShieldFramesLastAbsorbAmount or "nil"
+                ))
+            end
             if totalAbsorb ~= nil and CanAccessValue(totalAbsorb) then
                 ChatPrint("|cff00ccffShieldFrames|r calculator total absorb: " .. tostring(totalAbsorb))
             else
