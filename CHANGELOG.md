@@ -2,6 +2,11 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.153] — 2026-07-26
+
+### Fixed
+- Blood Shield sized as a fixed 48px bootstrap tip when Midnight secrets the health bar width: recover bar width via GetRect/parent fallbacks and size hatch from the readable Blood Shield amount instead
+
 ## [1.0.152] — 2026-07-26
 
 ### Fixed

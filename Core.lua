@@ -115,6 +115,37 @@ local function IsPositiveFinite(value)
     return n ~= nil and n > 0
 end
 
+-- Midnight can mark StatusBar:GetWidth() secret even when the bar is laid out.
+-- Prefer GetWidth, then GetRect, then parent/frame fallbacks.
+local function SafeRegionWidth(region)
+    if not region then
+        return nil
+    end
+    local width = SafeNumber(region.GetWidth and region:GetWidth())
+    if IsPositiveFinite(width) then
+        return width
+    end
+    if region.GetRect then
+        local ok, _, _, rectWidth = pcall(region.GetRect, region)
+        if ok then
+            rectWidth = SafeNumber(rectWidth)
+            if IsPositiveFinite(rectWidth) then
+                return rectWidth
+            end
+        end
+    end
+    if region.GetScaledRect then
+        local ok, _, _, rectWidth = pcall(region.GetScaledRect, region)
+        if ok then
+            rectWidth = SafeNumber(rectWidth)
+            if IsPositiveFinite(rectWidth) then
+                return rectWidth
+            end
+        end
+    end
+    return nil
+end
+
 -- Midnight: never `if secretBool` / `and secretBool` — compare explicitly.
 local function SafeBool(value)
     if value == nil or IsSecret(value) then
@@ -2182,9 +2213,18 @@ local function ApplyOwnedOvershieldVisual(frame, healthBar, unit)
         hasBlizzSize = true
     end
 
-    local ownedWidth = SafeNumber(healthBar:GetWidth())
+    local ownedWidth = SafeRegionWidth(healthBar)
     if not IsPositiveFinite(ownedWidth) then
         ownedWidth = SafeNumber(frame.ShieldFramesCachedBarWidth)
+    end
+    if not IsPositiveFinite(ownedWidth) then
+        -- Player/compact health bars sometimes secret their width; the parent
+        -- health container or unit frame often still reports a readable size.
+        local parent = healthBar.GetParent and healthBar:GetParent()
+        ownedWidth = SafeRegionWidth(parent)
+        if not IsPositiveFinite(ownedWidth) then
+            ownedWidth = SafeRegionWidth(frame)
+        end
     end
     if not IsPositiveFinite(ownedWidth) or ownedWidth <= 0 then
         return false
@@ -2987,7 +3027,35 @@ local function SafeHealthBarWidth(frame)
     return SafeNumber(frame.ShieldFramesCachedBarWidth)
 end
 
-local function ComputeBootstrapOverlayWidth(frame)
+local function ComputeBootstrapOverlayWidth(frame, healthBar, unit, maxHealth)
+    -- Prefer Blood Shield / known absorb proportion when we have amounts but
+    -- ApplyOwned earlier failed (usually secret bar width — now recovered via
+    -- SafeRegionWidth). Avoid a sticky fixed 48px tip.
+    local ownedWidth = SafeRegionWidth(healthBar)
+        or SafeNumber(frame and frame.ShieldFramesCachedBarWidth)
+    local maxH = SafeNumber(maxHealth) or SafeNumber(frame and frame.ShieldFramesLastMaxHealth)
+    if unit and IsPositiveFinite(ownedWidth) and IsPositiveFinite(maxH) then
+        local snap = GetAbsorbSnapshot(unit, maxH)
+        local absorb = snap and SafeNumber(snap.total)
+        if not IsPositiveFinite(absorb) then
+            absorb = SafeNumber(frame and frame.ShieldFramesLastAbsorbAmount)
+        end
+        if IsPositiveFinite(absorb) and absorb > 0 then
+            local width = (absorb / maxH) * ownedWidth
+            if IsPositiveFinite(width) and width > 0 then
+                if width > ownedWidth then
+                    width = ownedWidth
+                end
+                return width
+            end
+        elseif snap and IsPositiveFinite(snap.fraction) then
+            local width = snap.fraction * ownedWidth
+            if IsPositiveFinite(width) and width > 0 then
+                return math.min(width, ownedWidth)
+            end
+        end
+    end
+
     local cached = frame and SafeNumber(frame.ShieldFramesLastOverlayWidth)
     if cached and cached > 0 then
         return cached
@@ -3031,7 +3099,7 @@ local function ApplyOvershieldBootstrapOverlay(frame, healthBar, maxHealth, over
 
     if FrameHasBlizzOvershieldGlow(frame) then
         frame.ShieldFramesLastBootstrapMode = "glow-width"
-        local overlayWidth = ComputeBootstrapOverlayWidth(frame)
+        local overlayWidth = ComputeBootstrapOverlayWidth(frame, healthBar, unit, maxHealth)
         if ApplyOverlayAndGlow(frame, healthBar, overlay, glow, overlayWidth, 32) then
             frame.ShieldFramesLastOverlayWidth = overlayWidth
             -- Do not poison CachedBarWidth with the stripe pixel width (was 48).
@@ -3817,7 +3885,12 @@ local function PrintDebugInfo()
                 if playerFrame.ShieldFramesLastApplyPath == "bootstrap" then
                     ChatPrint("|cff00ccffShieldFrames|r bootstrap mode: " .. tostring(playerFrame.ShieldFramesLastBootstrapMode or "none"))
                     if playerFrame.ShieldFramesLastBootstrapMode == "glow-width" or playerFrame.ShieldFramesLastBootstrapMode == "active-width" then
-                        local bootstrapWidth = ComputeBootstrapOverlayWidth(playerFrame)
+                        local bootstrapWidth = ComputeBootstrapOverlayWidth(
+                            playerFrame,
+                            playerHealthBar,
+                            unit,
+                            SafeNumber(playerFrame.ShieldFramesLastMaxHealth) or SafeNumber(renderMaxHealth)
+                        )
                         ChatPrint("|cff00ccffShieldFrames|r bootstrap overlay width: " .. tostring(bootstrapWidth or "nil"))
                     end
                 end
