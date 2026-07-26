@@ -2,6 +2,325 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.148] — 2026-07-26
+
+### Fixed
+- Priest self-shield sticky after expire: stop re-caching SoftHide width as live absorb; clear player frames when aura/absorb reads empty
+
+## [1.0.147] — 2026-07-26
+
+### Fixed
+- Glow Opacity slider had no effect: draw path forced alpha ≥ 0.95; now uses the setting value
+
+## [1.0.146] — 2026-07-26
+
+### Fixed
+- Divine Aegis (47753) from Radiance/crit heals: track in seed list; keep a full-size leading glow on small hatches (no longer shrink glow with absorb width)
+
+## [1.0.145] — 2026-07-26
+
+### Fixed
+- Stacked absorbs (e.g. PW:S + Blazing Barrier): hatch grows to max(Blizzard width, summed tracked auras / estimates); look up absorb auras by spell ID when party aura scans miss them
+
+## [1.0.144] — 2026-07-26
+
+### Fixed
+- Inconsistent glow by shield spell: size hatch+glow from Blizzard absorb width for all absorbs; stop clearing that width when we SoftHide Blizzard chrome
+
+## [1.0.143] — 2026-07-26
+
+### Fixed
+- ADDON_ACTION_BLOCKED taint: stop learning absorbs inside Blizzard FillBar/heal-prediction hooks and drop CLEU learning; defer learn to `UNIT_AURA` / `UNIT_ABSORB_AMOUNT_CHANGED` via `C_Timer.After(0)`
+
+## [1.0.142] — 2026-07-26
+
+### Changed
+- Absorb detection no longer depends on hand-maintained per-spec spell lists: scan helpful auras, auto-learn spell IDs from readable `UnitGetTotalAbsorbs`, and keep a small seed list only as a bootstrap
+
+## [1.0.141] — 2026-07-26
+
+### Fixed
+- Priest Void Shield (spell 1253593) was not a known absorb aura — player OOC clear wiped our glow while Blizzard hatch remained; recognize Void Shield and keep FillBar-sized absorbs
+
+## [1.0.140] — 2026-07-26
+
+### Fixed
+- Priest missing glow: ADD blend on white health clamps invisible; draw SoftEdgeGlow with BLEND (+ ADD on top for colored bars)
+
+## [1.0.139] — 2026-07-26
+
+### Changed
+- Tighten seam glow width and texture falloff
+
+## [1.0.138] — 2026-07-26
+
+### Changed
+- Ship `Media/SoftEdgeGlow.tga` (bright center, soft alpha falloff both ways) and use that as the single seam glow
+
+## [1.0.137] — 2026-07-26
+
+### Changed
+- Real soft glow: mirrored `Shield-Overshield` wings with ADD blend (bright center at the seam, falloff both ways; no flat strip bar)
+
+## [1.0.135] — 2026-07-26
+
+### Fixed
+- Simplify edge glow back to one WHITE8X8 seam marker (cyan-on-white is fine if drawn; prior soft/strip/gradient paths were the real failure)
+
+## [1.0.133] — 2026-07-26
+
+### Fixed
+- Glow missing again after gradient attempt: draw soft edge as stacked WHITE8X8 strips (same solid texture that was visibly working)
+
+## [1.0.132] — 2026-07-26
+
+### Fixed
+- Harsh black glow bar: `Shield-Overshield` + BLEND showed atlas black pixels; replace with a soft horizontal alpha gradient (works on priest white and mage blue)
+
+## [1.0.131] — 2026-07-26
+
+### Fixed
+- Glow missing or “random” bar: stop cross-anchoring to the overlay; place soft+ADD glow from the same leftInset as the hatch (visible on priest and mage)
+
+## [1.0.130] — 2026-07-26
+
+### Fixed
+- Priest party frames: edge glow invisible on white health bars (ADD blend); use BLEND and draw above the hatch on the health side only
+
+## [1.0.129] — 2026-07-26
+
+### Fixed
+- Hatch+glow stuck after shields expired: stop redrawing from cached Blizzard/last overlay width; clear caches when auras are gone
+
+## [1.0.128] — 2026-07-26
+
+### Fixed
+- Flat strip beside the glow: draw glow under the hatch, flip soft falloff toward the edge, and stop overlapping hatch pixels
+
+## [1.0.127] — 2026-07-26
+
+### Changed
+- Edge marker uses Blizzard `Shield-Overshield` with ADD blend for a soft glow instead of a flat bar
+
+## [1.0.126] — 2026-07-26
+
+### Fixed
+- Lua error `SafeOverlayHeight` nil at apply time (local defined after use) — hatch + glow never drew
+
+## [1.0.125] — 2026-07-26
+
+### Fixed
+- Glow missing after 1.0.124: draw a solid WHITE8X8 edge bar on the same clip as the hatch (no cross-frame holder / Shield-Overshield)
+
+## [1.0.124] — 2026-07-26
+
+### Changed
+- Edge glow is point-anchored to the hatch’s left edge (summed overshield “max” as it builds from the right), so it moves automatically when absorbs are added or depleted
+- Uses Shield-Overshield on a raised holder for a clearer vertical edge; absorb-change events update all matching party frames, not only player
+
+## [1.0.123] — 2026-07-26
+
+### Fixed
+- Regression: OnShow hooks were detaching Blizzard absorb before we could measure/draw — Barrier/PW:S showed nothing
+- Cache FillBar width first, draw owned hatch+glow, then soft-hide Blizzard (never strip if we cannot replace)
+- Stop killing `totalAbsorb` / overlay on OnShow
+
+## [1.0.122] — 2026-07-26
+
+### Fixed
+- **Approach change:** stop anchoring glow to Blizzard absorb regions (Barrier StatusBar/shadow kept winning)
+- Hide all Blizzard absorb chrome, then draw **one owned hatch + glow** sized to max(known aura sum, calculator, widest Blizzard width snapshot)
+- Glow is always created with that hatch — priest and mage share the same path
+
+## [1.0.121] — 2026-07-26
+
+### Fixed
+- **Root cause of mage glow stuck on Barrier:** glow inset math skipped values `<= 1`, so a full-width total hatch (inset 0) was ignored and the shorter Barrier edge won
+- Hide Blizzard `TotalAbsorbLeftShadow` (Barrier-sized) so it can’t look like our glow
+- Prefer the **widest right-aligned** absorb chunk when choosing the glow edge
+
+## [1.0.120] — 2026-07-26
+
+### Fixed
+- Glow uses the **leftmost** edge among all Blizzard absorb visuals (full hatch), not `TotalAbsorbLeftShadow` / StatusBar which only track Blazing Barrier
+- Priest glow: apply from Blizzard hatch before secret-absorb “clear” logic can wipe party frames that still show a hatch
+
+## [1.0.119] — 2026-07-26
+
+### Fixed
+- Glow follows **total** absorb (Barrier + PW:S), not just Blazing Barrier — anchor to `TotalAbsorbLeftShadow` / `totalAbsorbOverlay` instead of the StatusBar fill
+- Hide Barrier-sized StatusBar solid fill when the tiled overlay shows the fuller hatch
+- Raise glow on a holder frame so it stays visible on white priest health bars
+
+## [1.0.118] — 2026-07-26
+
+### Fixed
+- Lua error `attempt to call a nil value` at ApplyGlowOnBlizzHatch: define GetBlizzAbsorbHatchRegion before it is called
+
+## [1.0.117] — 2026-07-26
+
+### Fixed
+- Glow now pins to **Blizzard’s absorb hatch left edge** instead of a guessed width — fixes mage glow sitting short of the real shield and missing priest glow
+- Stop detaching/replacing Blizzard Shield-Overlay (it sizes correctly with secret absorbs); only hide the default overAbsorbGlow
+
+## [1.0.116] — 2026-07-26
+
+### Fixed
+- Glow aligns to the full overshield: snapshot Blizzard’s secret-sized absorb pixel width before detaching it, then draw our hatch+glow to that width
+- Priest glow: always draw a crisp edge marker on any hatch; apply from Blizzard width alone when aura amounts are unreadable
+- Strip all Shield-/Absorb textures under compact frames so Blizzard’s wider hatch can’t sit under a shorter glow
+
+## [1.0.115] — 2026-07-26
+
+### Fixed
+- Glow no longer sits inside the hatch: pin the glow’s right edge to the hatch’s left edge (Shield-Overshield’s bright column was inset in the 16px texture)
+
+## [1.0.114] — 2026-07-26
+
+### Fixed
+- Glow always draws on the hatch’s left edge whenever a hatch is shown (priest PW:S no longer skips glow)
+- Mage glow no longer sits short of the real shield: stop replacing larger calculator absorb with the ~25% Barrier estimate; hatch and glow share one clip-relative left edge
+
+## [1.0.113] — 2026-07-26
+
+### Fixed
+- Priest / party hatch now gets the left-edge glow when the calculator reports overshield as 0 but a known absorb aura (e.g. Power Word: Shield) is present
+
+## [1.0.112] — 2026-07-26
+
+### Fixed
+- Priest / party shields (e.g. Power Word: Shield) show again when aura points or UnitGetTotalAbsorbs are secret — estimate from max health or bar-width fraction
+- White Shield-Fill stub past compact frame borders: never restore Blizzard absorb while ShieldFrames is enabled; keep frame clipping + detach on clear/fail
+- Party UnitHealthMax fallback reads StatusBar extents when unit APIs are secret
+
+## [1.0.111] — 2026-07-26
+
+### Fixed
+- Glow returns to the **left edge** of the reverse-fill overshield (health left→right, shield right→left); glow only when overshield is present
+- Clarified layout: one summed hatch from the right, glow on the hatch’s inner edge
+
+## [1.0.110] — 2026-07-26
+
+### Fixed
+- Glow moves to the **right tip** of the hatch (Blizzard-style) so the striped bar no longer continues past the glow
+- Removed bootstrap tint/stretch path that stacked a second hatch on party frames
+- Harder Blizzard absorb detach (clear points + zero size on the sink) to stop white Shield-Fill past the border
+
+## [1.0.109] — 2026-07-26
+
+### Fixed
+- Lua error on compact frame tick: skip non-frame `flowFrames` entries like `"linebreak"`
+
+## [1.0.108] — 2026-07-26
+
+### Fixed
+- Barrier-only overshield: glow width scales down with short hatches (~25% max HP) so a 28px glow no longer swallows the shield and reads as a harsh slab
+- Glow re-anchored to the hatch (natural texcoords, no flip) so height stays inside the bar
+
+## [1.0.107] — 2026-07-26
+
+### Fixed
+- White bleed: Blizzard `totalAbsorb` / Shield-Fill is reparented off the unit frame while ShieldFrames owns it (hide/alpha still lost the redraw race)
+- Harsh glow cut: horizontally flip `Shield-Overshield` so its soft edge faces the hatch (texture is authored for the right tip)
+
+## [1.0.106] — 2026-07-26
+
+### Fixed
+- White bleed past party borders: enable `SetClipsChildren` on the compact unit frame only (never the health StatusBar) while overshield is shown
+- Harsh health→overshield cut at the glow: wider softer glow, hatch leading edge inset so the Overshield texture feathers the seam
+
+## [1.0.105] — 2026-07-26
+
+### Fixed
+- Party overshield bleed (white/hatch past the border): ShieldFrames now always owns compact absorb drawing — Blizzard `totalAbsorb` / `Shield-Fill` is stripped on every heal-prediction update (not only after we mark the frame active), and compact updates run immediately instead of deferred
+
+## [1.0.104] — 2026-07-26
+
+### Fixed
+- Party health going black: overshield clip is parented to the unit frame, not the health StatusBar (a full-size clipping child of a StatusBar blanks the fill)
+- Force `SetClipsChildren(false)` on compact health bars every apply to clear leftover 1.0.101 state
+
+## [1.0.103] — 2026-07-26
+
+### Fixed
+- Glow sits 4px left over the hatch seam so the hatch’s leading lip no longer peeks ahead of the glow bar
+
+## [1.0.102] — 2026-07-26
+
+### Fixed
+- Party frames turning solid black after gaining a shield: `SetClipsChildren` must never be applied to compact frames or their health StatusBars (it blanks the health fill)
+
+## [1.0.101] — 2026-07-26
+
+### Fixed
+- White bleed past compact borders: stop breaking Blizzard absorb anchors (`ClearAllPoints`/`SetWidth` on `totalAbsorb` was causing Shield-Fill to stick out)
+- Enable `SetClipsChildren` on the compact frame + health bar while ShieldFrames owns the overlay so any remaining Blizzard fill can’t paint past the black border
+- Clamp Blizzard absorb bars that extend past the health bar even when ShieldFrames is not drawing
+
+## [1.0.100] — 2026-07-26
+
+### Fixed
+- Overshield redrawn as a single clipped hatch texture (StatusBar path removed) so layers can’t stack or paint past the frame
+- Blizzard `totalAbsorb` / `Shield-Fill` force-nuked on show, on fill-bar updates, and on a short tick while ShieldFrames owns the frame
+- Glow locked to the hatch texture’s left edge
+
+## [1.0.99] — 2026-07-26
+
+### Fixed
+- White `Shield-Fill` no longer bleeds past compact frame borders — Blizzard absorb bars/overlays are force-hidden whenever ShieldFrames owns the frame
+- Dropped stacked tint/overlay layers; overshield is a single reverse-fill hatch
+- Glow anchors to the hatch fill’s inner edge so it can’t sit mid-overshield
+
+## [1.0.98] — 2026-07-26
+
+### Fixed
+- Lua error `attempt to call a nil value` in stripe apply (`ApplyTiledStatusBarFill` used before its local definition) that aborted updates and left a flooded hatch
+- Failed updates now clear the overlay instead of leaving a partial apply on the bar
+
+## [1.0.97] — 2026-07-26
+
+### Fixed
+- Overshield hatch is drawn on the reverse-fill StatusBar texture itself (no separate SetWidth overlay), so the stripe can’t desync and flood the whole health bar
+
+## [1.0.96] — 2026-07-26
+
+### Fixed
+- Overshield stripe no longer floods the whole health bar — width is absorb÷max×bar only (status-bar `fill:GetWidth()` is the full bar, not the filled portion)
+
+## [1.0.95] — 2026-07-26
+
+### Fixed
+- Dual-shield glow alignment: stripe and glow now share one display width (max of fill vs computed), so the glow sits on the hatch’s inner edge instead of a shorter Barrier-only width
+
+## [1.0.94] — 2026-07-26
+
+### Fixed
+- Overshield glow aligns to the stripe’s inner edge using the stripe’s laid-out width (no hatched sliver past the glow)
+
+## [1.0.93] — 2026-07-26
+
+### Fixed
+- Multiple absorbs (e.g. Blazing Barrier + Power Word: Shield) are summed for stripe width instead of using only one aura
+- Overshield glow pins to the inner edge of the combined reverse-fill (from bar right − width), so it no longer sits on the far right tip while the stripe floats
+
+## [1.0.92] — 2026-07-26
+
+### Fixed
+- Sticky player/party overshield after barrier fades: OOC player clear requires a live barrier aura (lingering Blizzard glow / secret absorb no longer keep the stripe)
+- Dropping Blazing Barrier clears player + compact self frames immediately via `UNIT_AURA`
+
+## [1.0.91] — 2026-07-26
+
+### Fixed
+- Mage Blazing Barrier sizing no longer uses tiny wrong aura points (dummy coeffs / leftovers) — falls back to ~25% max health
+- Leave-combat / aura-drop clear no longer keeps a sticky stripe from last absorb amount or custom overlay alone
+
+## [1.0.90] — 2026-07-26
+
+### Fixed
+- Sticky overshield after barrier fades: secret calculator values / cached aura alone no longer keep the stripe
+- Clear path resets absorb cache; persist secret absorbs only with live glow, live aura, combat evidence, or a short post-event grace
+
 ## [1.0.89] — 2026-07-26
 
 ### Fixed
