@@ -474,6 +474,9 @@ local ABSORB_AURA_SPELL_IDS = SEED_ABSORB_SPELL_IDS
 local GENERIC_ABSORB_HEALTH_FRACTION = 0.22
 local MAGE_BARRIER_HEALTH_FRACTION = 0.25
 local MIN_ABSORB_POINT = 100
+-- Pixel hatch when Midnight only exposes Blizzard's overAbsorbGlow tip (Blood Shield
+-- aura/amount secret) and we have no prior width to reuse.
+local DEFAULT_BOOTSTRAP_OVERLAY_WIDTH = 48
 
 local function GetLearnedAbsorbSpellIds()
     local db = GetDB()
@@ -1212,6 +1215,15 @@ local function EstimateAbsorbFromOvershieldContext(frame, unit, healthBar, maxHe
         return frame.ShieldFramesLastAbsorbAmount
     end
 
+    -- Full-HP overshield: tip glow with secret amount (common Blood Shield case).
+    -- Estimate from max health so owned hatch can still size.
+    if hasGlow then
+        local maxH = SafeNumber(renderMax)
+        if maxH and maxH > 0 then
+            return maxH * GENERIC_ABSORB_HEALTH_FRACTION
+        end
+    end
+
     return nil
 end
 
@@ -1361,10 +1373,14 @@ local function HasClearNoAbsorbSignal(frame, unit, totalAbsorb, overshieldAmount
 
     -- Player: if known absorb auras are gone and absorb reads as empty, clear immediately.
     -- Do not keep a SoftHide FillBar cache alive after self-shields expire (priest sticky hatch).
+    -- Keep drawing while Blizzard's combat overAbsorbGlow is still live (Blood Shield can
+    -- be fully secret — aura lookup false, readable absorb nil).
     if IsPlayerUnitToken(unit) then
+        local blizzGlowLive = FrameHasBlizzOvershieldGlow(frame) or FrameHasRawOvershieldGlow(frame)
         if not UnitHasKnownAbsorbAura(unit)
             and UnitHasReadableAbsorb(unit) == false
             and not FrameShowsAbsorbBar(frame)
+            and not blizzGlowLive
         then
             return true
         end
@@ -1372,6 +1388,7 @@ local function HasClearNoAbsorbSignal(frame, unit, totalAbsorb, overshieldAmount
             and not UnitHasKnownAbsorbAura(unit)
             and UnitHasReadableAbsorb(unit) ~= true
             and not FrameShowsAbsorbBar(frame)
+            and not blizzGlowLive
         then
             return true
         end
@@ -2194,7 +2211,25 @@ local function ApplyOwnedOvershieldVisual(frame, healthBar, unit)
             end
         end
     end
-    -- Never fall back to LastOverlayWidth — that kept hatch+glow after shields expired.
+    -- Blizzard tip glow only (Blood Shield / secret Midnight): no aura points, no hatch
+    -- width — still draw so we don't leave apply-failed with a naked overAbsorbGlow.
+    if (not IsPositiveFinite(displayWidth) or displayWidth <= 0)
+        and (FrameHasBlizzOvershieldGlow(frame) or FrameHasRawOvershieldGlow(frame))
+    then
+        local estimated = unit and EstimateAbsorbFromOvershieldContext(frame, unit, healthBar, maxHealth)
+        if IsPositiveFinite(estimated) and IsPositiveFinite(maxHealth) and maxHealth > 0 then
+            displayWidth = (estimated / maxHealth) * ownedWidth
+            absorb = estimated
+            hasPositiveAbsorb = true
+        else
+            local bootstrap = SafeNumber(frame.ShieldFramesLastOverlayWidth)
+            if not IsPositiveFinite(bootstrap) or bootstrap <= 1 then
+                bootstrap = DEFAULT_BOOTSTRAP_OVERLAY_WIDTH
+            end
+            displayWidth = bootstrap
+        end
+    end
+    -- Never fall back to LastOverlayWidth alone — that kept hatch+glow after shields expired.
     if not IsPositiveFinite(displayWidth) or displayWidth <= 0 then
         return false
     end
@@ -2923,8 +2958,6 @@ local function ApplyOvershieldBar(frame, healthBar, absorbAmount, maxHealth, ove
     return true
 end
 
-local DEFAULT_BOOTSTRAP_OVERLAY_WIDTH = 48
-
 local MIDNIGHT_UNIT_FRAME_UNITS = {
     player = true,
     target = true,
@@ -3088,16 +3121,28 @@ local function ApplyMidnightOvershieldDisplay(frame, healthBar, renderAbsorb, re
         return true
     end
 
+    local glowLive = FrameHasBlizzOvershieldGlow(frame) or FrameHasRawOvershieldGlow(frame)
     if not inCombat then
         -- Out of combat: only bootstrap when Blizzard still shows a live overshield glow.
-        if not FrameHasBlizzOvershieldGlow(frame) and not FrameHasRawOvershieldGlow(frame) then
+        if not glowLive then
             frame.ShieldFramesLastApplyPath = "skipped-ooc"
             return false
         end
     end
 
-    -- Do not use the old tint+stretch bootstrap — it stacked a second hatch/glow on
-    -- top of Blizzard and produced the multi-layer mess on party frames.
+    -- Secret absorb + Blizzard tip glow only (Blood Shield under Midnight): owned hatch
+    -- with health-fraction / bootstrap width. Do not leave apply-failed with no overlay.
+    if glowLive then
+        if ApplyOwnedOvershieldVisual(frame, healthBar, unit) then
+            frame.ShieldFramesLastApplyPath = "owned-glow-bootstrap"
+            return true
+        end
+        if ApplyOvershieldBootstrapOverlay(frame, healthBar, max, overshieldAmount, unit) then
+            frame.ShieldFramesLastApplyPath = "bootstrap"
+            return true
+        end
+    end
+
     frame.ShieldFramesLastApplyPath = "skipped-no-readable-absorb"
     return false
 end
@@ -3137,12 +3182,15 @@ local function UpdateMidnightOvershield(frame, healthBar, unit)
 
     -- Own hatch+glow when Blizzard shows absorb OR we know absorb auras are up.
     -- Do this before clear/evidence checks (party absorb amounts are often secret).
+    -- Also when only overAbsorbGlow is live — Blood Shield aura can be fully secret.
     local unitToken = unit or frame.displayedUnit or frame.unit
     local absorbSnap = unitToken and GetAbsorbSnapshot(unitToken, nil) or nil
     local cachedBlizz = SafeNumber(frame.ShieldFramesBlizzAbsorbWidth)
+    local glowLive = FrameHasBlizzOvershieldGlow(frame) or FrameHasRawOvershieldGlow(frame)
     if FrameHasBlizzAbsorbHatch(frame, healthBar)
         or (absorbSnap and absorbSnap.hasKnown)
         or (IsPositiveFinite(cachedBlizz) and cachedBlizz > 1)
+        or glowLive
     then
         if ApplyOwnedOvershieldVisual(frame, healthBar, unitToken) then
             SetFrameOvershieldActive(frame, true)

@@ -2,6 +2,11 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.151] — 2026-07-26
+
+### Fixed
+- Blood DK / secret combat absorbs: when Midnight hides Blood Shield aura points but Blizzard still shows `overAbsorbGlow`, draw owned hatch+glow from a health-fraction estimate instead of `apply-failed` with no overlay
+
 ## [1.0.150] — 2026-07-26
 
 ### Fixed
