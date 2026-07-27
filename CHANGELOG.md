@@ -2,6 +2,11 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.158] — 2026-07-27
+
+### Fixed
+- Critical: `ApplyOwnedOvershieldVisual` called `SnapshotBlizzAbsorbWidth` before that local was defined (Lua nil) — every combat update aborted with `attempt to call a nil value` at Core.lua:2248 (`update skip reason: error`). Moved the helper above ApplyOwned so Blood Shield overlays can draw again.
+
 ## [1.0.157] — 2026-07-27
 
 ### Fixed

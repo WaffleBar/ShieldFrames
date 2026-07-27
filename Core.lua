@@ -2127,6 +2127,47 @@ local function SnapshotWidestAbsorbWidth(frame, healthBar)
     return SafeNumber(frame and frame.ShieldFramesBlizzAbsorbWidth)
 end
 
+-- Blizzard sizes absorb with secret SetValue; we can't read the amount but we can
+-- snapshot the laid-out pixel width before we detach those regions.
+-- MUST stay above ApplyOwnedOvershieldVisual — Lua locals are nil before declaration.
+local function SnapshotBlizzAbsorbWidth(frame, healthBar)
+    if type(frame) ~= "table" then
+        return nil
+    end
+
+    -- Measure live regions this pass only. Do NOT grow-only merge with the old
+    -- cache — that froze Blood Shield at peak width while it depleted.
+    local liveBest = nil
+
+    local candidates = {
+        frame.totalAbsorbOverlay,
+        frame.totalAbsorbBarOverlay,
+        frame.totalAbsorb,
+        frame.totalAbsorbBar,
+        healthBar and healthBar.totalAbsorbOverlay,
+        healthBar and healthBar.totalAbsorb,
+    }
+
+    for _, region in ipairs(candidates) do
+        if region and not IsFrameForbidden(region) then
+            local ok, width = pcall(function()
+                return SafeNumber(region.GetWidth and region:GetWidth())
+            end)
+            if ok and IsPositiveFinite(width) and width > 1 then
+                if not liveBest or width > liveBest then
+                    liveBest = width
+                end
+            end
+        end
+    end
+
+    if IsPositiveFinite(liveBest) then
+        frame.ShieldFramesBlizzAbsorbWidth = liveBest
+        return liveBest
+    end
+    return SafeNumber(frame.ShieldFramesBlizzAbsorbWidth)
+end
+
 local function HideAllBlizzAbsorbChrome(frame, healthBar)
     if type(frame) ~= "table" then
         return
@@ -2588,46 +2629,6 @@ end
 local function ApplyGlowOnBlizzHatch(frame, healthBar)
     local unit = frame.displayedUnit or frame.unit
     return ApplyOwnedOvershieldVisual(frame, healthBar, unit)
-end
-
--- Blizzard sizes absorb with secret SetValue; we can't read the amount but we can
--- snapshot the laid-out pixel width before we detach those regions.
-local function SnapshotBlizzAbsorbWidth(frame, healthBar)
-    if type(frame) ~= "table" then
-        return nil
-    end
-
-    -- Measure live regions this pass only. Do NOT grow-only merge with the old
-    -- cache — that froze Blood Shield at peak width while it depleted.
-    local liveBest = nil
-
-    local candidates = {
-        frame.totalAbsorbOverlay,
-        frame.totalAbsorbBarOverlay,
-        frame.totalAbsorb,
-        frame.totalAbsorbBar,
-        healthBar and healthBar.totalAbsorbOverlay,
-        healthBar and healthBar.totalAbsorb,
-    }
-
-    for _, region in ipairs(candidates) do
-        if region and not IsFrameForbidden(region) then
-            local ok, width = pcall(function()
-                return SafeNumber(region.GetWidth and region:GetWidth())
-            end)
-            if ok and IsPositiveFinite(width) and width > 1 then
-                if not liveBest or width > liveBest then
-                    liveBest = width
-                end
-            end
-        end
-    end
-
-    if IsPositiveFinite(liveBest) then
-        frame.ShieldFramesBlizzAbsorbWidth = liveBest
-        return liveBest
-    end
-    return SafeNumber(frame.ShieldFramesBlizzAbsorbWidth)
 end
 
 local function DetachShieldTexturesUnder(root, ownerFrame, depth)
