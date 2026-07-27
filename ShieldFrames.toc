@@ -3,7 +3,7 @@
 ## Notes: Overshield overlay for Blizzard unit frames.|n|nReplaces the default right-edge glow with a transparent bar that extends left across the health bar, sized to the real overshield amount. Supports player, target, focus, pet, and compact party/raid frames.|n|nParty and raid frames also require Interface > Raid Frames > Display Incoming Heals.|nType /shieldframes or /sf for settings. Type /sfdebug for debug info.
 ## Category: Unit Frames
 ## Author: Waffle
-## Version: 1.0.156
+## Version: 1.0.157
 ## IconTexture: Interface\AddOns\ShieldFrames\Media\AddonIcon.png
 ## X-Website: https://github.com/WaffleBar/ShieldFrames
 ## SavedVariables: ShieldFramesDB

@@ -1418,32 +1418,60 @@ local function HasActiveAbsorbEvidence(frame, unit, totalAbsorb, overshieldAmoun
     return false
 end
 
+local function FrameHasCachedBlizzAbsorbWidth(frame)
+    local width = SafeNumber(frame and frame.ShieldFramesBlizzAbsorbWidth)
+    return IsPositiveFinite(width) and width > 1
+end
+
+local function SeedLastAbsorbAmount(frame, amount)
+    amount = SafeNumber(amount)
+    if not frame or not IsPositiveFinite(amount) or amount <= 0 then
+        return false
+    end
+    frame.ShieldFramesLastAbsorbAmount = amount
+    return true
+end
+
+-- True only when we are confident the player has no shield left.
+-- Secret absorb (nil) must NOT count as empty — Blood Shield often secrets aura + amount.
+local function PlayerAbsorbClearIsSafe(frame, unit)
+    if not IsPlayerUnitToken(unit) then
+        return false
+    end
+    if UnitHasKnownAbsorbAura(unit) then
+        return false
+    end
+    -- Require an explicit readable zero, not secret/nil.
+    if UnitHasReadableAbsorb(unit) ~= false then
+        return false
+    end
+    if FrameShowsAbsorbBar(frame) then
+        return false
+    end
+    if FrameHasBlizzOvershieldGlow(frame) or FrameHasRawOvershieldGlow(frame) then
+        return false
+    end
+    if HasRecentAbsorbEvent(frame) then
+        return false
+    end
+    if FrameHasCachedBlizzAbsorbWidth(frame) then
+        return false
+    end
+    if frame and frame.ShieldFramesKnownAbsorbAuraPresent == true then
+        return false
+    end
+    return true
+end
+
 local function HasClearNoAbsorbSignal(frame, unit, totalAbsorb, overshieldAmount)
     if unit and KnownAbsorbAuraIsDepleted(unit) then
         return true
     end
 
-    -- Player: if known absorb auras are gone and absorb reads as empty, clear immediately.
-    -- Do not keep a SoftHide FillBar cache alive after self-shields expire (priest sticky hatch).
-    -- Keep drawing while Blizzard's combat overAbsorbGlow is still live (Blood Shield can
-    -- be fully secret — aura lookup false, readable absorb nil).
-    if IsPlayerUnitToken(unit) then
-        local blizzGlowLive = FrameHasBlizzOvershieldGlow(frame) or FrameHasRawOvershieldGlow(frame)
-        if not UnitHasKnownAbsorbAura(unit)
-            and UnitHasReadableAbsorb(unit) == false
-            and not FrameShowsAbsorbBar(frame)
-            and not blizzGlowLive
-        then
-            return true
-        end
-        if not UnitAffectingCombat(unit)
-            and not UnitHasKnownAbsorbAura(unit)
-            and UnitHasReadableAbsorb(unit) ~= true
-            and not FrameShowsAbsorbBar(frame)
-            and not blizzGlowLive
-        then
-            return true
-        end
+    -- Player: clear only with explicit empty absorb + no live Blizzard/aura evidence.
+    -- Do not treat secret (nil) absorb as empty — that wiped Blood Shield mid-combat.
+    if IsPlayerUnitToken(unit) and PlayerAbsorbClearIsSafe(frame, unit) then
+        return true
     end
 
     if HasLiveAbsorbVisualSignal(frame, unit) then
@@ -1471,15 +1499,24 @@ local function HasClearNoAbsorbSignal(frame, unit, totalAbsorb, overshieldAmount
     end
 
     if SafeLessOrEqual(totalAbsorb, 0) == true then
+        if IsPlayerUnitToken(unit) then
+            return PlayerAbsorbClearIsSafe(frame, unit)
+        end
         return true
     end
 
     if unit and UnitHasReadableAbsorb(unit) == false then
+        if IsPlayerUnitToken(unit) then
+            return PlayerAbsorbClearIsSafe(frame, unit)
+        end
         return true
     end
 
     if HasSecretAbsorbValue(totalAbsorb, overshieldAmount) then
         if ShouldPersistSecretAbsorb(frame, unit, totalAbsorb, overshieldAmount) then
+            return false
+        end
+        if IsPlayerUnitToken(unit) and not PlayerAbsorbClearIsSafe(frame, unit) then
             return false
         end
         return true
@@ -2243,15 +2280,30 @@ local function ApplyOwnedOvershieldVisual(frame, healthBar, unit)
         frame.ShieldFramesLastOverlayWidth = nil
         return false
     end
+
+    local combatEvidence = unit
+        and UnitAffectingCombat(unit)
+        and (
+            HasRecentAbsorbEvent(frame)
+            or hasKnownAura
+            or frame.ShieldFramesKnownAbsorbAuraPresent == true
+            or hasCachedBlizz
+        )
+
     -- Player readableAbsorb is often nil (secret) during Midnight combat. Do not treat
-    -- that as "no shield" while Blizzard overAbsorbGlow / last absorb still say otherwise.
+    -- that as "no shield" while Blizzard overAbsorbGlow / last absorb / combat evidence
+    -- still say otherwise (damaged Blood Shield often has no tip glow).
     if unit and not hasKnownAura and not hasPositiveAbsorb and not hasLiveBlizz and not glowLive then
-        if readableAbsorb == false or (IsPlayerUnitToken(unit) and readableAbsorb ~= true) then
+        if combatEvidence then
+            -- Fall through to combat bootstrap below.
+        elseif readableAbsorb == false then
             frame.ShieldFramesBlizzAbsorbWidth = nil
             frame.ShieldFramesLastOverlayWidth = nil
             return false
-        end
-        if not hasCachedBlizz then
+        elseif IsPlayerUnitToken(unit) and readableAbsorb ~= true and not hasCachedBlizz then
+            frame.ShieldFramesLastOverlayWidth = nil
+            return false
+        elseif not hasCachedBlizz then
             frame.ShieldFramesLastOverlayWidth = nil
             return false
         end
@@ -2321,12 +2373,34 @@ local function ApplyOwnedOvershieldVisual(frame, healthBar, unit)
             displayWidth = (estimated / maxHealth) * ownedWidth
             absorb = estimated
             hasPositiveAbsorb = true
+            SeedLastAbsorbAmount(frame, estimated)
         else
             local bootstrap = SafeNumber(frame.ShieldFramesLastOverlayWidth)
             if not IsPositiveFinite(bootstrap) or bootstrap <= 1 then
                 bootstrap = DEFAULT_BOOTSTRAP_OVERLAY_WIDTH
             end
             displayWidth = bootstrap
+        end
+    end
+    -- Combat Blood DK: damaged HP often means no tip glow while Blood Shield is fully
+    -- in-bar and secret. Bootstrap from a health fraction when combat evidence exists.
+    if (not IsPositiveFinite(displayWidth) or displayWidth <= 0)
+        and combatEvidence
+    then
+        local estimated = unit and EstimateAbsorbFromOvershieldContext(frame, unit, healthBar, maxHealth)
+        if not IsPositiveFinite(estimated) then
+            local maxH = SafeNumber(maxHealth)
+            if maxH and maxH > 0 then
+                estimated = maxH * GENERIC_ABSORB_HEALTH_FRACTION
+            end
+        end
+        if IsPositiveFinite(estimated) and IsPositiveFinite(maxHealth) and maxHealth > 0 then
+            displayWidth = (estimated / maxHealth) * ownedWidth
+            absorb = estimated
+            hasPositiveAbsorb = true
+            SeedLastAbsorbAmount(frame, estimated)
+        else
+            displayWidth = DEFAULT_BOOTSTRAP_OVERLAY_WIDTH
         end
     end
     -- Never fall back to LastOverlayWidth alone — that kept hatch+glow after shields expired.
@@ -2914,6 +2988,11 @@ end
 
 local function ApplyOvershieldBar(frame, healthBar, absorbAmount, maxHealth, overshieldAmount)
     local unit = frame.displayedUnit or frame.unit
+    -- Seed before ApplyOwned so secret-aura Blood Shield can size from a known amount.
+    SeedLastAbsorbAmount(frame, absorbAmount)
+    if IsPositiveFinite(SafeNumber(maxHealth)) then
+        frame.ShieldFramesLastMaxHealth = SafeNumber(maxHealth)
+    end
     if ApplyOwnedOvershieldVisual(frame, healthBar, unit) then
         return true
     end
@@ -3213,6 +3292,9 @@ local function ApplyMidnightOvershieldDisplay(frame, healthBar, renderAbsorb, re
         displayAbsorb = frame.ShieldFramesLastAbsorbAmount
     end
 
+    -- Restore 1.0.154 seeding so ApplyOwned can size when aura points are secret.
+    SeedLastAbsorbAmount(frame, displayAbsorb)
+
     local max = renderMaxHealth
     if not CanAccessValue(max) then
         if frame.ShieldFramesLastMaxHealth and frame.ShieldFramesLastMaxHealth > 0 then
@@ -3223,6 +3305,9 @@ local function ApplyMidnightOvershieldDisplay(frame, healthBar, renderAbsorb, re
                 max = fallbackMax
             end
         end
+    end
+    if IsPositiveFinite(SafeNumber(max)) then
+        frame.ShieldFramesLastMaxHealth = SafeNumber(max)
     end
 
     -- Status bar only with finite readable absorb+max. Secret SetValue/SetMinMaxValues
@@ -3256,6 +3341,15 @@ local function ApplyMidnightOvershieldDisplay(frame, healthBar, renderAbsorb, re
     end
 
     local glowLive = FrameHasBlizzOvershieldGlow(frame) or FrameHasRawOvershieldGlow(frame)
+    local combatEvidence = inCombat and (
+        HasRecentAbsorbEvent(frame)
+        or KnownAbsorbAuraEvidenceActive(frame, unit)
+        or frame.ShieldFramesKnownAbsorbAuraPresent == true
+        or FrameHasCachedBlizzAbsorbWidth(frame)
+        or (IsPositiveFinite(SafeNumber(frame.ShieldFramesLastAbsorbAmount))
+            and frame.ShieldFramesLastAbsorbAmount > 0)
+    )
+
     if not inCombat then
         -- Out of combat: only bootstrap when Blizzard still shows a live overshield glow.
         if not glowLive then
@@ -3264,14 +3358,14 @@ local function ApplyMidnightOvershieldDisplay(frame, healthBar, renderAbsorb, re
         end
     end
 
-    -- Secret absorb + Blizzard tip glow only (Blood Shield under Midnight): owned hatch
-    -- with health-fraction / bootstrap width. Do not leave apply-failed with no overlay.
-    if glowLive then
+    -- Secret absorb under Midnight: owned hatch via tip glow OR combat evidence
+    -- (damaged Blood Shield often has no overAbsorbGlow while still active).
+    if glowLive or combatEvidence then
         if ApplyOwnedOvershieldVisual(frame, healthBar, unit) then
-            frame.ShieldFramesLastApplyPath = "owned-glow-bootstrap"
+            frame.ShieldFramesLastApplyPath = glowLive and "owned-glow-bootstrap" or "owned-combat-bootstrap"
             return true
         end
-        if ApplyOvershieldBootstrapOverlay(frame, healthBar, max, overshieldAmount, unit) then
+        if glowLive and ApplyOvershieldBootstrapOverlay(frame, healthBar, max, overshieldAmount, unit) then
             frame.ShieldFramesLastApplyPath = "bootstrap"
             return true
         end
@@ -3321,10 +3415,21 @@ local function UpdateMidnightOvershield(frame, healthBar, unit)
     local absorbSnap = unitToken and GetAbsorbSnapshot(unitToken, nil) or nil
     local cachedBlizz = SafeNumber(frame.ShieldFramesBlizzAbsorbWidth)
     local glowLive = FrameHasBlizzOvershieldGlow(frame) or FrameHasRawOvershieldGlow(frame)
+    local combatEvidence = unitToken
+        and UnitAffectingCombat(unitToken)
+        and (
+            HasRecentAbsorbEvent(frame)
+            or (absorbSnap and absorbSnap.hasKnown)
+            or frame.ShieldFramesKnownAbsorbAuraPresent == true
+            or (IsPositiveFinite(cachedBlizz) and cachedBlizz > 1)
+            or (IsPositiveFinite(SafeNumber(frame.ShieldFramesLastAbsorbAmount))
+                and frame.ShieldFramesLastAbsorbAmount > 0)
+        )
     if FrameHasBlizzAbsorbHatch(frame, healthBar)
         or (absorbSnap and absorbSnap.hasKnown)
         or (IsPositiveFinite(cachedBlizz) and cachedBlizz > 1)
         or glowLive
+        or combatEvidence
     then
         if ApplyOwnedOvershieldVisual(frame, healthBar, unitToken) then
             SetFrameOvershieldActive(frame, true)
@@ -4208,6 +4313,9 @@ eventFrame:SetScript("OnEvent", function(_, event, unit)
                 or ((GetAbsorbFromKnownAura("player") or 0) > 0)
                 or UnitHasReadableAbsorb("player") == true
                 or (PlayerFrame and FrameHasRawOvershieldGlow(PlayerFrame))
+                or (PlayerFrame and FrameShowsAbsorbBar(PlayerFrame))
+                or (PlayerFrame and FrameHasCachedBlizzAbsorbWidth(PlayerFrame))
+                or (PlayerFrame and HasRecentAbsorbEvent(PlayerFrame))
             if stillHasShield then
                 -- Soft leave: keep the overlay continuous so it doesn't jump when absorb becomes readable.
                 if PlayerFrame then
@@ -4296,8 +4404,7 @@ eventFrame:SetScript("OnEvent", function(_, event, unit)
         end)
 
         if unit == "player"
-            and UnitHasReadableAbsorb(unit) == false
-            and not UnitHasKnownAbsorbAura(unit)
+            and PlayerAbsorbClearIsSafe(PlayerFrame, unit)
         then
             ClearPlayerOwnedOvershields()
         end
@@ -4307,8 +4414,7 @@ eventFrame:SetScript("OnEvent", function(_, event, unit)
         InvalidateAbsorbSnapshot(unit)
         QueueAbsorbSpellLearn(unit)
         if unit == "player"
-            and not UnitHasKnownAbsorbAura(unit)
-            and UnitHasReadableAbsorb(unit) == false
+            and PlayerAbsorbClearIsSafe(PlayerFrame, unit)
         then
             ClearPlayerOwnedOvershields()
         end

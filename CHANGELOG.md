@@ -2,6 +2,14 @@
 
 All notable changes to ShieldFrames are documented here.
 
+## [1.0.157] — 2026-07-27
+
+### Fixed
+- Blood DK damaged/in-bar Blood Shield under Midnight secrets: bootstrap owned hatch from combat evidence without requiring `overAbsorbGlow` (was applying nothing when absorb sat inside missing health)
+- Stop clearing player overlay when absorb is secret/`nil` or aura scan briefly misses — require an explicit readable zero plus no hatch/glow/recent absorb evidence
+- Restore LastAbsorb seeding before ApplyOwned (regressed in 1.0.155) so secret-aura sizing still works
+- Combat leave: keep overlay if Blizzard hatch width cache or recent absorb event still shows a shield
+
 ## [1.0.156] — 2026-07-26
 
 ### Fixed
